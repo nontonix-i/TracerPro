@@ -1,0 +1,8 @@
+{
+  "name": "TracerPro",
+  "description": "Streamline FMCG consignment cycles, multi-UOM inventory, sales routes, and personal bad stock management for field salesmen and distributors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

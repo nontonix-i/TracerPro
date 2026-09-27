@@ -1,0 +1,1346 @@
+package com.example.ui.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.data.local.AppDatabase
+import com.example.data.local.entity.*
+import com.example.data.repository.SfaRepository
+import com.example.util.OfflineSyncHelper
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.*
+
+enum class AppNavScreen(val title: String, val iconName: String) {
+    TRANSAKSI("Transaksi", "assignment"),
+    RIWAYAT("Riwayat", "history"),
+    DASHBOARD("Dashboard", "dashboard"),
+    MASTER_DATA("Master Data", "inventory"),
+    LAPORAN("Laporan", "analytics"),
+    KEUANGAN_PRIBADI("Keuangan Pribadi", "account_balance_wallet"),
+    UTILITAS("Utilitas", "settings"),
+    MAPS("Peta & Navigasi", "map")
+}
+
+enum class OutletSortBy(val label: String, val icon: String) {
+    TERDEKAT_GPS("Jarak Terdekat (GPS)", "location_on"),
+    LAMA_TIDAK_DIKUNJUNGI("Terlama Belum Dikunjungi", "history"),
+    URUTAN_RUTE("Urutan Jalur Rute", "route"),
+    OMSET_TERBESAR("Omset Penjualan Terbesar", "trending_up"),
+    PIUTANG_TERBESAR("Saldo Piutang Terbesar", "money_off"),
+    STOK_MENIPIS("Stok Titipan Sedikit", "inventory_2"),
+    NAMA_AZ("Nama Outlet (A-Z)", "sort_by_alpha")
+}
+
+enum class OutletFilterAging(val label: String) {
+    SEMUA("Semua Outlet"),
+    BELUM_HARI_INI("Belum Hari Ini"),
+    LEBIH_3_HARI("> 3 Hari"),
+    LEBIH_7_HARI("> 7 Hari (Mingguan)"),
+    LEBIH_14_HARI("> 14 Hari (Kritis)"),
+    LEBIH_30_HARI("> 30 Hari (Dormant)"),
+    KUSTOM_HARI("Kustom Hari..."),
+    SUDAH_HARI_INI("Selesai Hari Ini")
+}
+
+class SfaViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository: SfaRepository
+    
+    // Offline / Online Connectivity & Sync State
+    val isOnline: StateFlow<Boolean> = OfflineSyncHelper.observeNetworkConnectivity(application)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), OfflineSyncHelper.isNetworkAvailable(application))
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    init {
+        val db = AppDatabase.getDatabase(application)
+        repository = SfaRepository(db.sfaDao())
+
+        // Auto-sync addresses when device goes online
+        viewModelScope.launch {
+            isOnline.collect { online ->
+                if (online) {
+                    syncPendingAddresses(silent = true)
+                }
+            }
+        }
+
+        // Self-heal and normalize any unlinked ruteId or duplicate/zero visit sequences
+        viewModelScope.launch {
+            try {
+                val rutes = repository.getAllRutesDirect()
+                val warungs = repository.getAllWarungsDirect()
+                if (rutes.isNotEmpty() && warungs.isNotEmpty()) {
+                    val validRuteIds = rutes.map { it.id }.toSet()
+                    val defaultRuteId = rutes.first().id
+                    var hasChanges = false
+                    val normalizedWarungs = warungs.mapIndexed { index, w ->
+                        var updated = w
+                        if (w.ruteId.isBlank() || !validRuteIds.contains(w.ruteId)) {
+                            updated = updated.copy(ruteId = defaultRuteId)
+                            hasChanges = true
+                        }
+                        if (updated.urutanKunjungan <= 0) {
+                            updated = updated.copy(urutanKunjungan = index + 1)
+                            hasChanges = true
+                        }
+                        updated
+                    }
+                    if (hasChanges) {
+                        repository.insertWarungsBatch(normalizedWarungs)
+                    }
+                }
+                repository.deleteLegacyClosingTransactions()
+
+                // Purge any mock/dummy personal accounts and mock expenses
+                repository.purgeMockPersonalData()
+            } catch (_: Exception) {}
+        }
+
+        // Auto-select route for today when routes load if user has not manually chosen a route
+        viewModelScope.launch {
+            repository.allRutes.collect { ruteList ->
+                if (ruteList.isNotEmpty()) {
+                    if (!hasUserManuallySelectedRute) {
+                        val todayRute = findRuteForToday(ruteList)
+                        if (todayRute != null) {
+                            _selectedRuteId.value = todayRute.id
+                        }
+                    } else if (_selectedRuteId.value != null && ruteList.none { it.id == _selectedRuteId.value }) {
+                        val todayRute = findRuteForToday(ruteList)
+                        _selectedRuteId.value = todayRute?.id
+                    }
+                }
+            }
+        }
+    }
+
+    fun syncPendingAddresses(silent: Boolean = false) {
+        viewModelScope.launch {
+            if (!isOnline.value) {
+                if (!silent) {
+                    _feedbackSnackbar.value = "Perangkat sedang Offline. Alamat akan otomatis disinkronkan saat terhubung ke internet."
+                }
+                return@launch
+            }
+
+            _isSyncing.value = true
+            try {
+                val syncedCount = OfflineSyncHelper.syncPendingWarungAddresses(getApplication(), repository)
+                if (syncedCount > 0) {
+                    _feedbackSnackbar.value = "Berhasil menerjemahkan $syncedCount koordinat GPS menjadi alamat jalan resmi."
+                } else if (!silent) {
+                    _feedbackSnackbar.value = "Semua koordinat outlet sudah tersinkronisasi."
+                }
+            } catch (e: Exception) {
+                if (!silent) {
+                    _feedbackSnackbar.value = "Gagal sinkronisasi alamat: ${e.message}"
+                }
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    // State Flows from DB (Eagerly subscribed for instant real-time updates without reload/relog)
+    val products: StateFlow<List<ProductEntity>> = repository.allProducts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val warungs: StateFlow<List<WarungEntity>> = repository.allWarungs
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val rutes: StateFlow<List<RuteEntity>> = repository.allRutes
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val drawers: StateFlow<List<InventoryDrawerEntity>> = repository.allInventoryDrawers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val dailyLoadings: StateFlow<List<DailyLoadingEntity>> = repository.allDailyLoadings
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val transactions: StateFlow<List<TransactionEntity>> = repository.allTransactions
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val bsSortirs: StateFlow<List<BsSortirEntity>> = repository.allBsSortirs
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val pabriks: StateFlow<List<PabrikEntity>> = repository.allPabriks
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val writeOffs: StateFlow<List<WriteOffEntity>> = repository.allWriteOffs
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val userProfile: StateFlow<UserProfileEntity?> = repository.userProfile
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val appLanguage: StateFlow<String> = userProfile
+        .map { it?.appLanguage?.ifBlank { "ID" } ?: "ID" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "ID")
+
+    val customPrices: StateFlow<List<WarungCustomPriceEntity>> = repository.allCustomPrices
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val weeklyShipments: StateFlow<List<WeeklyShipmentEntity>> = repository.allWeeklyShipments
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // --- PERSONAL FINANCE (KEUANGAN PRIBADI, SALDO, PENGELUARAN, HUTANG/PIUTANG, PAYLATER) ---
+    val personalAccounts: StateFlow<List<PersonalAccountEntity>> = repository.allPersonalAccounts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val personalExpenses: StateFlow<List<PersonalExpenseEntity>> = repository.allPersonalExpenses
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val personalDebts: StateFlow<List<PersonalDebtEntity>> = repository.allPersonalDebts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // Location & GPS Tracking (100% Offline Compatible)
+    private val _currentGpsLocation = MutableStateFlow(
+        com.example.util.LocationHelper.getInstantLocation(application)
+    )
+    val currentGpsLocation: StateFlow<com.example.util.UserGpsLocation> = _currentGpsLocation.asStateFlow()
+
+    private var gpsTrackingJob: kotlinx.coroutines.Job? = null
+
+    init {
+        startGpsTracking()
+    }
+
+    fun startGpsTracking() {
+        gpsTrackingJob?.cancel()
+        gpsTrackingJob = viewModelScope.launch {
+            // First fetch best instant location available
+            val instant = com.example.util.LocationHelper.getInstantLocation(getApplication())
+            if (instant.isAvailable) {
+                _currentGpsLocation.value = instant
+            }
+            // Then continuously collect live GPS stream
+            com.example.util.LocationHelper.observeCurrentLocation(getApplication()).collect { loc ->
+                _currentGpsLocation.value = loc
+            }
+        }
+    }
+
+    fun refreshGpsLocation() {
+        val instant = com.example.util.LocationHelper.getInstantLocation(getApplication())
+        _currentGpsLocation.value = instant
+        startGpsTracking()
+    }
+
+    suspend fun acquireAccurateGps(): com.example.util.UserGpsLocation {
+        val fix = com.example.util.LocationHelper.acquireFreshSatelliteFix(getApplication())
+        if (fix.isAvailable) {
+            _currentGpsLocation.value = fix
+        }
+        return fix
+    }
+
+    // Outlet List Sorting and Aging Filter States
+    private val _outletSortBy = MutableStateFlow(OutletSortBy.TERDEKAT_GPS)
+    val outletSortBy: StateFlow<OutletSortBy> = _outletSortBy.asStateFlow()
+
+    private val _outletFilterAging = MutableStateFlow(OutletFilterAging.SEMUA)
+    val outletFilterAging: StateFlow<OutletFilterAging> = _outletFilterAging.asStateFlow()
+
+    private val _customMinDaysFilter = MutableStateFlow<Int?>(null)
+    val customMinDaysFilter: StateFlow<Int?> = _customMinDaysFilter.asStateFlow()
+
+    fun setOutletSortBy(sortBy: OutletSortBy) {
+        _outletSortBy.value = sortBy
+    }
+
+    fun setOutletFilterAging(filterAging: OutletFilterAging) {
+        _outletFilterAging.value = filterAging
+        if (filterAging != OutletFilterAging.KUSTOM_HARI) {
+            _customMinDaysFilter.value = null
+        }
+    }
+
+    fun setCustomMinDaysFilter(days: Int?) {
+        _customMinDaysFilter.value = days
+        if (days != null) {
+            _outletFilterAging.value = OutletFilterAging.KUSTOM_HARI
+        }
+    }
+
+    // Navigation and UI state
+    private val _currentScreen = MutableStateFlow(AppNavScreen.TRANSAKSI)
+    val currentScreen: StateFlow<AppNavScreen> = _currentScreen.asStateFlow()
+
+    private val _selectedRuteId = MutableStateFlow<String?>(null)
+    val selectedRuteId: StateFlow<String?> = _selectedRuteId.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    // Dialog & Flow States
+    private val _activeTransactionDialog = MutableStateFlow<TransactionDialogState?>(null)
+    val activeTransactionDialog: StateFlow<TransactionDialogState?> = _activeTransactionDialog.asStateFlow()
+
+    private val _showReceiptDialog = MutableStateFlow<TransactionEntity?>(null)
+    val showReceiptDialog: StateFlow<TransactionEntity?> = _showReceiptDialog.asStateFlow()
+
+    private val _showReceiptListDialog = MutableStateFlow<List<TransactionEntity>?>(null)
+    val showReceiptListDialog: StateFlow<List<TransactionEntity>?> = _showReceiptListDialog.asStateFlow()
+
+    private val _showClosingReceipt = MutableStateFlow<ClosingSummaryData?>(null)
+    val showClosingReceipt: StateFlow<ClosingSummaryData?> = _showClosingReceipt.asStateFlow()
+
+    private val _feedbackSnackbar = MutableStateFlow<String?>(null)
+    val feedbackSnackbar: StateFlow<String?> = _feedbackSnackbar.asStateFlow()
+
+    var hasUserManuallySelectedRute: Boolean = false
+        private set
+
+    fun setScreen(screen: AppNavScreen) {
+        _currentScreen.value = screen
+    }
+
+    fun setSelectedRute(ruteId: String?, fromUser: Boolean = true) {
+        if (fromUser) {
+            hasUserManuallySelectedRute = true
+        }
+        _selectedRuteId.value = ruteId
+    }
+
+    fun autoSelectTodayRute() {
+        val todayRute = findRuteForToday(rutes.value)
+        if (todayRute != null) {
+            hasUserManuallySelectedRute = false
+            _selectedRuteId.value = todayRute.id
+        }
+    }
+
+    fun resetToTodayRute() {
+        hasUserManuallySelectedRute = false
+        val todayRute = findRuteForToday(rutes.value)
+        if (todayRute != null) {
+            _selectedRuteId.value = todayRute.id
+        }
+    }
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
+    fun openTransactionDialog(state: TransactionDialogState) {
+        _activeTransactionDialog.value = state
+    }
+
+    fun closeTransactionDialog() {
+        _activeTransactionDialog.value = null
+    }
+
+    fun showReceipt(transaction: TransactionEntity) {
+        _showReceiptDialog.value = transaction
+    }
+
+    fun closeReceipt() {
+        _showReceiptDialog.value = null
+    }
+
+    fun showReceiptList(transactions: List<TransactionEntity>) {
+        _showReceiptListDialog.value = transactions
+    }
+
+    fun closeReceiptList() {
+        _showReceiptListDialog.value = null
+    }
+
+    fun showClosingReceiptDialog(data: ClosingSummaryData) {
+        _showClosingReceipt.value = data
+    }
+
+    fun closeClosingReceipt() {
+        _showClosingReceipt.value = null
+    }
+
+    fun dismissSnackbar() {
+        _feedbackSnackbar.value = null
+    }
+
+    // --- BUSINESS ACTIONS ---
+
+    fun executeBatchWeeklyShipment(items: List<com.example.data.repository.WeeklyShipmentInput>) {
+        viewModelScope.launch {
+            val validItems = items.filter { it.jumlahPack > 0 }
+            if (validItems.isEmpty()) {
+                _feedbackSnackbar.value = "Tidak ada kiriman mingguan yang diinput (Kuantiti 0)."
+                return@launch
+            }
+            repository.processWeeklyShipment(validItems)
+            val totalPack = validItems.sumOf { it.jumlahPack }
+            val totalPcs = validItems.sumOf { it.jumlahPack * it.rasioKonversi }
+            _feedbackSnackbar.value = "✅ Kiriman masuk: $totalPack Pack ($totalPcs Pcs) berhasil diakumulasikan ke Pool Gudang Rumah!"
+            closeTransactionDialog()
+        }
+    }
+
+    fun openBayarHutangSupplierDialog(loading: DailyLoadingEntity) {
+        _activeTransactionDialog.value = TransactionDialogState.BayarHutangSupplier(loading)
+    }
+
+    fun executePayLoadingDebt(loadingId: String, bayarAmount: Double, namaProduk: String = "") {
+        viewModelScope.launch {
+            if (bayarAmount <= 0) {
+                _feedbackSnackbar.value = "Nominal pembayaran harus lebih dari 0."
+                return@launch
+            }
+            repository.payLoadingDebt(loadingId, bayarAmount)
+            _feedbackSnackbar.value = "Pembayaran hutang supplier sebesar ${formatRupiah(bayarAmount)} $namaProduk berhasil dicatat!"
+            closeTransactionDialog()
+        }
+    }
+
+    fun executeTitipBaru(
+        warung: WarungEntity,
+        productId: String,
+        sumberStok: String,
+        jumlahPcs: Int,
+        hargaSatuan: Double,
+        gpsLat: Double,
+        gpsLng: Double,
+        gpsAddress: String,
+        catatan: String
+    ) {
+        viewModelScope.launch {
+            repository.processTitipBaru(
+                warung = warung,
+                productId = productId,
+                sumberStok = sumberStok,
+                jumlahPcs = jumlahPcs,
+                hargaSatuan = hargaSatuan,
+                gpsLat = gpsLat,
+                gpsLng = gpsLng,
+                gpsAddress = gpsAddress,
+                catatan = catatan
+            )
+            _feedbackSnackbar.value = "Konsinyasi Baru Berhasil: +$jumlahPcs Pcs ke Outlet ${warung.namaWarung}"
+            closeTransactionDialog()
+        }
+    }
+
+    fun executeBatchTitipBaru(
+        warung: WarungEntity,
+        items: List<com.example.data.repository.BatchTitipItem>,
+        gpsLat: Double,
+        gpsLng: Double,
+        gpsAddress: String,
+        catatan: String
+    ) {
+        viewModelScope.launch {
+            val validItems = items.filter { it.jumlahPcs > 0 }
+            if (validItems.isEmpty()) {
+                _feedbackSnackbar.value = "Tidak ada produk dengan jumlah titipan > 0."
+                return@launch
+            }
+            val created = repository.processBatchTitipBaru(
+                warung = warung,
+                items = validItems,
+                gpsLat = gpsLat,
+                gpsLng = gpsLng,
+                gpsAddress = gpsAddress,
+                catatan = catatan
+            )
+            val totalPcs = validItems.sumOf { it.jumlahPcs }
+            _feedbackSnackbar.value = "Konsinyasi Baru Berhasil: ${validItems.size} SKU (+$totalPcs Pcs) ke Outlet ${warung.namaWarung}"
+            closeTransactionDialog()
+            if (created.isNotEmpty()) {
+                _showReceiptListDialog.value = created
+            }
+        }
+    }
+
+    fun executeBatchTarikSisaDanRestock(
+        warung: WarungEntity,
+        items: List<com.example.data.repository.BatchTarikSisaItem>,
+        uangDiterima: Double,
+        gpsLat: Double,
+        gpsLng: Double,
+        gpsAddress: String,
+        catatan: String
+    ) {
+        viewModelScope.launch {
+            val validItems = items.filter { it.sisaTitipanLalu > 0 || it.sisaFisik > 0 || it.restockPcs > 0 }
+            if (validItems.isEmpty()) {
+                _feedbackSnackbar.value = "Tidak ada produk yang diproses."
+                return@launch
+            }
+            val created = repository.processBatchTarikSisaDanRestock(
+                warung = warung,
+                items = validItems,
+                uangDiterima = uangDiterima,
+                gpsLat = gpsLat,
+                gpsLng = gpsLng,
+                gpsAddress = gpsAddress,
+                catatan = catatan
+            )
+            val totalLaku = validItems.sumOf { (it.sisaTitipanLalu - it.sisaFisik).coerceAtLeast(0) }
+            val totalRestock = validItems.sumOf { it.restockPcs }
+            _feedbackSnackbar.value = "Transaksi Outlet Selesai: ${validItems.size} SKU (Laku: $totalLaku Pcs, Restock: $totalRestock Pcs, Bayar: ${formatRupiah(uangDiterima)})"
+            closeTransactionDialog()
+            if (created.isNotEmpty()) {
+                _showReceiptListDialog.value = created
+            }
+        }
+    }
+
+    fun executeTarikSisaDanRestock(
+        warung: WarungEntity,
+        productId: String,
+        sisaTitipanLalu: Int,
+        sisaFisik: Int,
+        hargaSatuan: Double,
+        uangDiterima: Double,
+        restockPcs: Int,
+        sumberRestock: String,
+        gpsLat: Double,
+        gpsLng: Double,
+        gpsAddress: String,
+        catatan: String,
+        tarikLayakPcs: Int = sisaFisik,
+        tarikBsPcs: Int = 0
+    ) {
+        viewModelScope.launch {
+            repository.processTarikSisaDanRestock(
+                warung = warung,
+                productId = productId,
+                sisaTitipanLalu = sisaTitipanLalu,
+                sisaFisik = sisaFisik,
+                hargaSatuan = hargaSatuan,
+                uangDiterima = uangDiterima,
+                restockPcs = restockPcs,
+                sumberRestock = sumberRestock,
+                gpsLat = gpsLat,
+                gpsLng = gpsLng,
+                gpsAddress = gpsAddress,
+                catatan = catatan,
+                tarikLayakPcs = tarikLayakPcs,
+                tarikBsPcs = tarikBsPcs
+            )
+            _feedbackSnackbar.value = "Transaksi Toko Selesai: Laku ${sisaTitipanLalu - sisaFisik} Pcs, Tarik $sisaFisik Pcs (Layak: $tarikLayakPcs, BS: $tarikBsPcs), Bayar ${formatRupiah(uangDiterima)}"
+            closeTransactionDialog()
+        }
+    }
+
+    fun executeBatchClosingSore(
+        items: List<com.example.data.repository.ProductClosingInput>,
+        summaryData: ClosingSummaryData? = null
+    ) {
+        viewModelScope.launch {
+            repository.processBatchClosingSore(items)
+            _feedbackSnackbar.value = "Closing Harian Multi-Supplier Berhasil: Setoran Pabrik & Stok Mobil Diperbarui."
+            closeTransactionDialog()
+            if (summaryData != null) {
+                _showClosingReceipt.value = summaryData
+            }
+        }
+    }
+
+    fun executeClosingSore(
+        loadingId: String,
+        sisaDusSore: Int,
+        sisaPcsLepasanSore: Int = 0,
+        summaryData: ClosingSummaryData? = null
+    ) {
+        viewModelScope.launch {
+            repository.processClosingSore(loadingId, sisaDusSore, sisaPcsLepasanSore)
+            _feedbackSnackbar.value = "Closing Harian Berhasil: Tagihan Supplier & Stok Mobil diperbarui."
+            closeTransactionDialog()
+            if (summaryData != null) {
+                _showClosingReceipt.value = summaryData
+            }
+        }
+    }
+
+    fun executeWriteOff(
+        warung: WarungEntity,
+        hargaSatuan: Double,
+        alasan: String
+    ) {
+        viewModelScope.launch {
+            repository.processWriteOff(warung, hargaSatuan, alasan)
+            _feedbackSnackbar.value = "Status ${warung.namaWarung} diubah Blacklist & Saldo Piutang/Stok di Write-Off."
+            closeTransactionDialog()
+        }
+    }
+
+    fun addOrUpdateProduct(product: ProductEntity) {
+        viewModelScope.launch {
+            repository.saveProduct(product)
+            _feedbackSnackbar.value = "Produk ${product.nama} tersimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun addOrUpdateWarung(warung: WarungEntity) {
+        viewModelScope.launch {
+            var finalWarung = warung
+
+            // Compress and persist photo into app internal storage
+            finalWarung.fotoOutlet?.let { photoUri ->
+                if (photoUri.isNotBlank()) {
+                    try {
+                        val compressedUri = com.example.util.ImageCompressor.compressAndPersistPhoto(
+                            context = getApplication(),
+                            sourceUriString = photoUri
+                        )
+                        finalWarung = finalWarung.copy(fotoOutlet = compressedUri)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+            
+            // If address is empty or contains coordinates placeholder
+            if (finalWarung.alamatLengkap.isBlank() || finalWarung.alamatLengkap.startsWith("Koordinat GPS")) {
+                if (isOnline.value) {
+                    val resolved = OfflineSyncHelper.reverseGeocodeCoordinates(
+                        getApplication(),
+                        finalWarung.latitude,
+                        finalWarung.longitude
+                    )
+                    if (!resolved.isNullOrBlank()) {
+                        finalWarung = finalWarung.copy(alamatLengkap = resolved, pendingAddressSync = false)
+                    } else {
+                        finalWarung = finalWarung.copy(
+                            alamatLengkap = "Koordinat GPS: ${String.format(Locale.US, "%.5f", finalWarung.latitude)}, ${String.format(Locale.US, "%.5f", finalWarung.longitude)}",
+                            pendingAddressSync = true
+                        )
+                    }
+                } else {
+                    finalWarung = finalWarung.copy(
+                        alamatLengkap = "Koordinat GPS: ${String.format(Locale.US, "%.5f", finalWarung.latitude)}, ${String.format(Locale.US, "%.5f", finalWarung.longitude)} (Offline)",
+                        pendingAddressSync = true
+                    )
+                }
+            }
+
+            repository.saveWarung(finalWarung)
+            _feedbackSnackbar.value = if (finalWarung.pendingAddressSync) {
+                "Outlet ${finalWarung.namaWarung} tersimpan offline (Titik GPS tercatat, alamat otomatis di-sync saat online)."
+            } else {
+                "Outlet ${finalWarung.namaWarung} tersimpan."
+            }
+            closeTransactionDialog()
+        }
+    }
+
+    fun updateWarungsBatch(warungs: List<WarungEntity>) {
+        viewModelScope.launch {
+            repository.insertWarungsBatch(warungs)
+        }
+    }
+
+    fun addOrUpdateRute(rute: RuteEntity) {
+        viewModelScope.launch {
+            repository.saveRute(rute)
+            _feedbackSnackbar.value = "Rute ${rute.namaRute} tersimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deleteProduct(product: ProductEntity) {
+        viewModelScope.launch {
+            repository.deleteProduct(product)
+            _feedbackSnackbar.value = "Produk ${product.nama} berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deleteWarung(warung: WarungEntity) {
+        viewModelScope.launch {
+            repository.deleteWarung(warung)
+            _feedbackSnackbar.value = "Outlet ${warung.namaWarung} berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deleteRute(rute: RuteEntity) {
+        viewModelScope.launch {
+            repository.deleteRute(rute)
+            _feedbackSnackbar.value = "Rute ${rute.namaRute} berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    fun addOrUpdatePabrik(pabrik: PabrikEntity) {
+        viewModelScope.launch {
+            repository.savePabrik(pabrik)
+            _feedbackSnackbar.value = "Supplier / Principal ${pabrik.namaPabrik} tersimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deletePabrik(pabrik: PabrikEntity) {
+        viewModelScope.launch {
+            repository.deletePabrik(pabrik)
+            _feedbackSnackbar.value = "Supplier / Principal ${pabrik.namaPabrik} berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    // --- PERSONAL FINANCE ACTIONS ---
+
+    fun savePersonalAccount(account: PersonalAccountEntity) {
+        viewModelScope.launch {
+            repository.insertOrUpdatePersonalAccount(account)
+            _feedbackSnackbar.value = "Akun keuangan '${account.namaAkun}' berhasil disimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deletePersonalAccount(account: PersonalAccountEntity) {
+        viewModelScope.launch {
+            repository.deletePersonalAccount(account)
+            _feedbackSnackbar.value = "Akun '${account.namaAkun}' berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    fun recordExpense(
+        jenis: String,
+        kategori: String,
+        nominal: Double,
+        accountId: String,
+        toAccountId: String? = null,
+        judul: String,
+        catatan: String = "",
+        fotoNotaUri: String = ""
+    ) {
+        viewModelScope.launch {
+            if (nominal <= 0) {
+                _feedbackSnackbar.value = "Nominal harus lebih dari Rp 0."
+                return@launch
+            }
+            if (accountId.isBlank()) {
+                _feedbackSnackbar.value = "Pilih akun/dompet asal terlebih dahulu."
+                return@launch
+            }
+            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val expense = PersonalExpenseEntity(
+                id = UUID.randomUUID().toString(),
+                jenis = jenis,
+                kategori = kategori,
+                nominal = nominal,
+                tanggal = todayStr,
+                accountId = accountId,
+                toAccountId = toAccountId,
+                judul = judul.ifBlank { kategori },
+                catatan = catatan,
+                fotoNotaUri = fotoNotaUri
+            )
+            repository.recordPersonalExpense(expense)
+            val actionLabel = if (jenis == "PENGELUARAN") "Pengeluaran" else if (jenis == "PEMASUKAN") "Pemasukan" else "Transfer antar akun"
+            _feedbackSnackbar.value = "$actionLabel sebesar ${formatRupiah(nominal)} berhasil dicatat & saldo akun diperbarui!"
+            closeTransactionDialog()
+        }
+    }
+
+    fun deletePersonalExpense(expense: PersonalExpenseEntity) {
+        viewModelScope.launch {
+            repository.deletePersonalExpense(expense)
+            _feedbackSnackbar.value = "Catatan transaksi ${expense.judul} dihapus & saldo dikembalikan."
+        }
+    }
+
+    fun savePersonalDebt(debt: PersonalDebtEntity) {
+        viewModelScope.launch {
+            if (debt.totalNominal <= 0) {
+                _feedbackSnackbar.value = "Nominal hutang/piutang harus lebih dari 0."
+                return@launch
+            }
+            if (debt.namaPihak.isBlank()) {
+                _feedbackSnackbar.value = "Nama teman / keluarga wajib diisi."
+                return@launch
+            }
+            repository.insertOrUpdatePersonalDebt(debt)
+            val label = if (debt.jenis == "PIUTANG_SAYA") "Piutang (Teman/Keluarga pinjam ke kita)" else "Hutang (Kita berhutang)"
+            _feedbackSnackbar.value = "$label '${debt.namaPihak}' berhasil disimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun deletePersonalDebt(debt: PersonalDebtEntity) {
+        viewModelScope.launch {
+            repository.deletePersonalDebt(debt)
+            _feedbackSnackbar.value = "Catatan hutang/piutang '${debt.namaPihak}' berhasil dihapus."
+            closeTransactionDialog()
+        }
+    }
+
+    fun recordDebtPayment(
+        debt: PersonalDebtEntity,
+        bayarNominal: Double,
+        accountId: String? = null,
+        keterangan: String = ""
+    ) {
+        viewModelScope.launch {
+            if (bayarNominal <= 0) {
+                _feedbackSnackbar.value = "Nominal cicilan/pelunasan harus lebih dari 0."
+                return@launch
+            }
+            repository.recordDebtPayment(
+                debtId = debt.id,
+                bayarNominal = bayarNominal,
+                accountId = accountId,
+                keterangan = keterangan
+            )
+            val sisa = (debt.sisaNominal - bayarNominal).coerceAtLeast(0.0)
+            val statusMsg = if (sisa <= 0.0) "LUNAS TOTAL!" else "Sisa ${formatRupiah(sisa)}"
+            _feedbackSnackbar.value = "Pembayaran ${formatRupiah(bayarNominal)} untuk ${debt.namaPihak} berhasil dicatat ($statusMsg)"
+            closeTransactionDialog()
+        }
+    }
+
+    fun resetDataForProduction() {
+        viewModelScope.launch {
+            repository.resetTransactionalDataForProduction()
+            _feedbackSnackbar.value = "Data transaksi, laci stok, dan saldo piutang berhasil dikosongkan (Siap Produksi)."
+        }
+    }
+
+    fun wipeAllMasterAndTransactionalData() {
+        viewModelScope.launch {
+            repository.wipeAllDataCompletely()
+            _feedbackSnackbar.value = "Seluruh database berhasil dikosongkan secara total (Fresh Production Start)."
+        }
+    }
+
+    fun clearAllPersonalFinanceData() {
+        viewModelScope.launch {
+            repository.clearAllPersonalFinance()
+            _feedbackSnackbar.value = "Seluruh data keuangan pribadi (akun, mutasi & hutang) berhasil dikosongkan."
+        }
+    }
+
+    // --- USER PROFILE ---
+    fun saveUserProfile(profile: UserProfileEntity) {
+        viewModelScope.launch {
+            repository.saveUserProfile(profile.copy(isConfigured = true))
+            _feedbackSnackbar.value = "Profil Salesman & Usaha berhasil disimpan."
+            closeTransactionDialog()
+        }
+    }
+
+    fun setAppLanguage(lang: String) {
+        viewModelScope.launch {
+            val current = repository.getUserProfileDirect() ?: UserProfileEntity()
+            val updated = current.copy(appLanguage = lang)
+            repository.saveUserProfile(updated)
+            _feedbackSnackbar.value = if (lang.equals("EN", ignoreCase = true)) {
+                "Language changed to English (US)"
+            } else {
+                "Bahasa diubah ke Bahasa Indonesia (ID)"
+            }
+        }
+    }
+
+    // --- CUSTOM PRICING PER WARUNG ---
+    fun getEffectivePriceForWarung(warungId: String, productId: String, defaultPrice: Double): Double {
+        val custom = customPrices.value.find { it.warungId == warungId && it.productId == productId }
+        return custom?.hargaJualPcs ?: defaultPrice
+    }
+
+    fun setCustomPrice(warungId: String, productId: String, hargaJualPcs: Double) {
+        viewModelScope.launch {
+            repository.saveCustomPrice(warungId, productId, hargaJualPcs)
+            _feedbackSnackbar.value = "Harga khusus Rp${hargaJualPcs.toLong()}/pcs berhasil disetel untuk outlet ini."
+        }
+    }
+
+    fun deleteCustomPrice(warungId: String, productId: String) {
+        viewModelScope.launch {
+            repository.deleteCustomPrice(warungId, productId)
+            _feedbackSnackbar.value = "Harga khusus dihapus. Kembali ke harga default produk."
+        }
+    }
+
+    // --- BACKUP & RESTORE ---
+    fun exportBackup(onResult: (com.example.util.ExportResult) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val result = com.example.util.BackupRestoreHelper.exportFullDatabaseToJson(getApplication(), repository)
+                onResult(result)
+            } catch (e: Exception) {
+                _feedbackSnackbar.value = "Gagal membuat backup: ${e.message}"
+            }
+        }
+    }
+
+    fun exportModularBackup(selection: com.example.util.BackupSelection, onResult: (com.example.util.ExportResult) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val result = com.example.util.BackupRestoreHelper.exportModularDatabaseToJson(getApplication(), repository, selection)
+                onResult(result)
+            } catch (e: Exception) {
+                _feedbackSnackbar.value = "Gagal membuat backup modular: ${e.message}"
+            }
+        }
+    }
+
+    fun exportZipBackup(selection: com.example.util.BackupSelection, onResult: (com.example.util.ZipBackupResult) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val result = com.example.util.BackupRestoreHelper.exportFullBackupToZip(getApplication(), repository, selection)
+                onResult(result)
+            } catch (e: Exception) {
+                _feedbackSnackbar.value = "Gagal membuat paket ZIP backup: ${e.message}"
+            }
+        }
+    }
+
+    fun copyBackupToSaf(sourceFile: java.io.File, targetUri: android.net.Uri, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val success = com.example.util.BackupRestoreHelper.copyFileToUri(getApplication(), sourceFile, targetUri)
+            if (success) {
+                _feedbackSnackbar.value = "Berkas migrasi berhasil disimpan ke folder HP!"
+            } else {
+                _feedbackSnackbar.value = "Gagal menyimpan berkas ke folder yang dipilih."
+            }
+            onComplete(success)
+        }
+    }
+
+    fun importBackup(jsonString: String, onComplete: (com.example.util.ImportResult) -> Unit) {
+        viewModelScope.launch {
+            val result = com.example.util.BackupRestoreHelper.importFullDatabaseFromJson(jsonString, repository, getApplication())
+            refreshGpsLocation()
+            _feedbackSnackbar.value = result.message
+            onComplete(result)
+        }
+    }
+
+    fun importModularBackup(jsonString: String, selection: com.example.util.BackupSelection, onComplete: (com.example.util.ImportResult) -> Unit) {
+        viewModelScope.launch {
+            val result = com.example.util.BackupRestoreHelper.importModularDatabaseFromJson(jsonString, repository, selection, getApplication())
+            refreshGpsLocation()
+            _feedbackSnackbar.value = result.message
+            onComplete(result)
+        }
+    }
+
+    fun importBackupFromUri(uri: android.net.Uri, selection: com.example.util.BackupSelection, onComplete: (com.example.util.ImportResult) -> Unit) {
+        viewModelScope.launch {
+            val result = com.example.util.BackupRestoreHelper.importFromUri(getApplication(), uri, repository, selection)
+            refreshGpsLocation()
+            _feedbackSnackbar.value = result.message
+            onComplete(result)
+        }
+    }
+
+    // ==========================================
+    // AI GATEWAY & COPILOT INTEGRATION
+    // ==========================================
+    private val _aiConfig = MutableStateFlow(com.example.data.ai.AiPreferencesHelper.getAiConfig(application))
+    val aiConfig: StateFlow<com.example.data.ai.AiConfig> = _aiConfig.asStateFlow()
+
+    private val _aiChatMessages = MutableStateFlow<List<com.example.data.ai.AiChatMessage>>(
+        listOf(
+            com.example.data.ai.AiChatMessage(
+                role = "assistant",
+                content = "Halo! Saya **TracerPro AI Copilot**, asisten operasional SFA Konsinyasi FMCG Anda. Ada yang bisa saya bantu terkait analisa performa toko, ringkasan setoran harian, atau strategi restock produk?"
+            )
+        )
+    )
+    val aiChatMessages: StateFlow<List<com.example.data.ai.AiChatMessage>> = _aiChatMessages.asStateFlow()
+
+    private val _isAiLoading = MutableStateFlow(false)
+    val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
+
+    fun updateAiConfig(newConfig: com.example.data.ai.AiConfig) {
+        com.example.data.ai.AiPreferencesHelper.saveAiConfig(getApplication(), newConfig)
+        _aiConfig.value = newConfig
+        _feedbackSnackbar.value = "Pengaturan AI Gateway berhasil diperbarui!"
+    }
+
+    fun testAiConnection(config: com.example.data.ai.AiConfig, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            val result = com.example.data.ai.OpenAiClient.testConnection(config)
+            _isAiLoading.value = false
+            result.onSuccess { msg ->
+                onResult(true, msg)
+            }.onFailure { err ->
+                onResult(false, "Koneksi Gagal: ${err.message}")
+            }
+        }
+    }
+
+    fun clearAiChatHistory() {
+        _aiChatMessages.value = listOf(
+            com.example.data.ai.AiChatMessage(
+                role = "assistant",
+                content = "Riwayat chat telah dibersihkan. Silakan tanyakan hal baru seputar operasional, keuangan, atau rute outlet Anda."
+            )
+        )
+    }
+
+    fun sendAiChatMessage(userMessage: String) {
+        val cleanMsg = userMessage.trim()
+        if (cleanMsg.isBlank()) return
+
+        val currentList = _aiChatMessages.value.toMutableList()
+        currentList.add(com.example.data.ai.AiChatMessage(role = "user", content = cleanMsg))
+        _aiChatMessages.value = currentList
+
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            try {
+                val cfg = _aiConfig.value
+                val systemPrompt = com.example.data.ai.AiPromptBuilder.buildSystemPrompt(cfg.customPersona)
+                
+                // Build dynamic operational context from Room DB (Full Database Context)
+                val contextData = com.example.data.ai.AiPromptBuilder.buildCopilotContextPrompt(
+                    profile = userProfile.value,
+                    pabriks = pabriks.value,
+                    products = products.value,
+                    rutes = rutes.value,
+                    warungs = warungs.value,
+                    customPrices = customPrices.value,
+                    drawers = drawers.value,
+                    allLoadings = dailyLoadings.value,
+                    transactions = transactions.value,
+                    sortirs = bsSortirs.value,
+                    writeOffs = writeOffs.value
+                )
+
+                val fullMessages = mutableListOf<com.example.data.ai.AiChatMessage>()
+                fullMessages.add(com.example.data.ai.AiChatMessage(role = "system", content = "$systemPrompt\n\n$contextData"))
+                
+                // Add conversation history (last 8 messages for context window efficiency)
+                val conversationHistory = currentList.takeLast(8)
+                fullMessages.addAll(conversationHistory)
+
+                val result = com.example.data.ai.OpenAiClient.generateChatCompletion(cfg, fullMessages, enableTools = cfg.isAgentModeEnabled)
+                _isAiLoading.value = false
+
+                result.onSuccess { reply ->
+                    if (reply.toolCalls.isNotEmpty() && cfg.isAgentModeEnabled) {
+                        // AI memutuskan untuk memanggil Action Tool (Agent Mode)
+                        val actionExecutor = com.example.data.ai.AiAgentActionExecutor(repository)
+                        val executedResults = mutableListOf<com.example.data.ai.AiToolExecutionResult>()
+
+                        for (toolCall in reply.toolCalls) {
+                            val execResult = actionExecutor.executeToolCall(toolCall)
+                            executedResults.add(execResult)
+                        }
+
+                        val actionSummaries = executedResults.joinToString("\n") { res ->
+                            if (res.isSuccess) "✅ **${res.toolName}**: ${res.summary}"
+                            else "❌ **${res.toolName}**: ${res.summary}"
+                        }
+
+                        val combinedResponse = buildString {
+                            if (reply.content.isNotBlank()) {
+                                append(reply.content)
+                                append("\n\n")
+                            }
+                            append("🤖 **[Agent Mode - Aksi Dieksekusi Langsung ke Database]:**\n")
+                            append(actionSummaries)
+                        }
+
+                        val updated = _aiChatMessages.value.toMutableList()
+                        updated.add(
+                            com.example.data.ai.AiChatMessage(
+                                role = "assistant",
+                                content = combinedResponse,
+                                executedActions = executedResults
+                            )
+                        )
+                        _aiChatMessages.value = updated
+
+                        _feedbackSnackbar.value = "AI Agent berhasil mengeksekusi ${executedResults.size} perintah ke database!"
+                    } else {
+                        // Respon teks biasa
+                        val updated = _aiChatMessages.value.toMutableList()
+                        updated.add(com.example.data.ai.AiChatMessage(role = "assistant", content = reply.content))
+                        _aiChatMessages.value = updated
+                    }
+                }.onFailure { err ->
+                    val updated = _aiChatMessages.value.toMutableList()
+                    val errorMsg = if (cfg.apiKey.isBlank() && cfg.endpoint.contains("openai.com")) {
+                        "⚠️ **API Key Belum Diisi:** Silakan atur Endpoint, API Key, dan Model Anda di menu **Utilitas > Pengaturan AI Gateway**."
+                    } else {
+                        "⚠️ **Gagal Mendapatkan Respons AI:** ${err.message}"
+                    }
+                    updated.add(com.example.data.ai.AiChatMessage(role = "assistant", content = errorMsg))
+                    _aiChatMessages.value = updated
+                }
+            } catch (e: Exception) {
+                _isAiLoading.value = false
+                val updated = _aiChatMessages.value.toMutableList()
+                updated.add(com.example.data.ai.AiChatMessage(role = "assistant", content = "⚠️ Terjadi kesalahan: ${e.message}"))
+                _aiChatMessages.value = updated
+            }
+        }
+    }
+
+    fun generateAiWhatsAppDraft(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            val cfg = _aiConfig.value
+            val systemPrompt = com.example.data.ai.AiPromptBuilder.buildSystemPrompt(cfg.customPersona)
+            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val todayTxs = transactions.value.filter { it.tanggal == todayStr || it.tanggal.startsWith(todayStr) }
+            val contextData = com.example.data.ai.AiPromptBuilder.buildCopilotContextPrompt(
+                profile = userProfile.value,
+                pabriks = pabriks.value,
+                products = products.value,
+                rutes = rutes.value,
+                warungs = warungs.value,
+                customPrices = customPrices.value,
+                drawers = drawers.value,
+                allLoadings = dailyLoadings.value,
+                transactions = transactions.value,
+                sortirs = bsSortirs.value,
+                writeOffs = writeOffs.value
+            )
+
+            val messages = listOf(
+                com.example.data.ai.AiChatMessage(role = "system", content = "$systemPrompt\n\n$contextData"),
+                com.example.data.ai.AiChatMessage(
+                    role = "user",
+                    content = "Buatkan draf teks pesan laporan operasional harian yang sangat rapi, profesional, dan siap dikirim ke WhatsApp Pemilik / Bos Distributor. Cantumkan rincian toko dikunjungi, total omset laku, kas tunai terkumpul, potensi setoran pabrik, sisa stok mobil, dan catatan piutang penting. Gunakan format WhatsApp (bold bintang, bullet points, emoji)."
+                )
+            )
+
+            val result = com.example.data.ai.OpenAiClient.generateChatCompletion(cfg, messages, enableTools = false)
+            _isAiLoading.value = false
+
+            result.onSuccess { res ->
+                onResult(res.content)
+            }.onFailure { err ->
+                val fallbackDraft = buildFallbackWhatsAppReport(todayTxs)
+                onResult(fallbackDraft)
+            }
+        }
+    }
+
+    fun getAiOutletRecommendation(warung: WarungEntity, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            val cfg = _aiConfig.value
+            val systemPrompt = com.example.data.ai.AiPromptBuilder.buildSystemPrompt(cfg.customPersona)
+            val outletPrompt = com.example.data.ai.AiPromptBuilder.buildOutletRecommendationPrompt(
+                warung = warung,
+                products = products.value,
+                transactions = transactions.value,
+                customPrices = customPrices.value,
+                drawers = drawers.value,
+                rutes = rutes.value
+            )
+
+            val messages = listOf(
+                com.example.data.ai.AiChatMessage(role = "system", content = systemPrompt),
+                com.example.data.ai.AiChatMessage(role = "user", content = outletPrompt)
+            )
+
+            val result = com.example.data.ai.OpenAiClient.generateChatCompletion(cfg, messages, enableTools = false)
+            _isAiLoading.value = false
+
+            result.onSuccess { res ->
+                onResult(res.content)
+            }.onFailure { err ->
+                val fallback = "💡 **Saran Sistem Heuristik:** Berdasarkan kategori ${warung.kategoriWarung}, titipkan 15–20 pcs produk fast-moving. Saldo bon saat ini ${formatRupiah(warung.saldoPiutang)} (Limit: ${formatRupiah(warung.limitHutangMaksimal)}). Pastikan tarik kas sebelum menambah limit kredit."
+                onResult(fallback)
+            }
+        }
+    }
+
+    private fun buildFallbackWhatsAppReport(todayTxs: List<TransactionEntity>): String {
+        val totalOmset = todayTxs.sumOf { it.subtotalLaku }
+        val totalKas = todayTxs.sumOf { it.uangDiterima }
+        val dateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())
+        val profile = userProfile.value
+
+        return """
+📋 *LAPORAN PENJUALAN HARIAN FMCG*
+📅 Tanggal: $dateStr
+👤 Salesman: ${profile?.namaSalesman ?: "Salesman"}
+🚚 Armada: ${profile?.platNomorMobil ?: "-"}
+🏢 Depo: ${profile?.namaDistributor ?: "Distributor"}
+
+*RINGKASAN OPERASIONAL:*
+• Toko Dikunjungi: ${todayTxs.size} Warung
+• Total Penjualan: ${formatRupiah(totalOmset)}
+• Kas Terkumpul: ${formatRupiah(totalKas)}
+• Total Piutang Aktif: ${formatRupiah(warungs.value.sumOf { it.saldoPiutang })}
+
+*STATUS STOK MOBIL:*
+• Fresh Pabrik: ${drawers.value.sumOf { it.stokFreshPabrikPcs }} Pcs
+• Retur Belum Sortir: ${drawers.value.sumOf { it.stokBsBelumSortirPcs }} Pcs
+• Aset Repack: ${drawers.value.sumOf { it.stokPribadiLayakJualPcs }} Pcs
+
+_Laporan dibuat otomatis via TracerPro SFA_
+""".trimIndent()
+    }
+
+    companion object {
+        private val rupiahFormat = NumberFormat.getCurrencyInstance(Locale("id", "ID")).apply {
+            maximumFractionDigits = 0
+            minimumFractionDigits = 0
+        }
+
+        private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy HH:mm", Locale("id", "ID"))
+        private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
+
+        @Synchronized
+        fun formatRupiah(amount: Double): String {
+            return rupiahFormat.format(amount).replace(",00", "")
+        }
+
+        @Synchronized
+        fun formatDate(timestamp: Long): String {
+            return dateTimeFormat.format(Date(timestamp))
+        }
+
+        @Synchronized
+        fun formatSimpleDate(timestamp: Long): String {
+            return dateFormat.format(Date(timestamp))
+        }
+
+        fun getTodayDayNames(calendar: Calendar = Calendar.getInstance()): List<String> {
+            val names = mutableListOf<String>()
+            when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.SUNDAY -> names.addAll(listOf("Minggu", "Sunday", "Ahad", "Sun", "Mgg", "Mg"))
+                Calendar.MONDAY -> names.addAll(listOf("Senin", "Monday", "Mon", "Sen"))
+                Calendar.TUESDAY -> names.addAll(listOf("Selasa", "Tuesday", "Tue", "Sel", "Sls"))
+                Calendar.WEDNESDAY -> names.addAll(listOf("Rabu", "Wednesday", "Wed", "Rab", "Rb"))
+                Calendar.THURSDAY -> names.addAll(listOf("Kamis", "Thursday", "Thu", "Kam", "Km"))
+                Calendar.FRIDAY -> names.addAll(listOf("Jumat", "Friday", "Jum'at", "Fri", "Jum", "Jmt"))
+                Calendar.SATURDAY -> names.addAll(listOf("Sabtu", "Saturday", "Sat", "Sab", "Sbt"))
+            }
+
+            try {
+                val date = calendar.time
+                val idLocale = Locale("id", "ID")
+                names.add(SimpleDateFormat("EEEE", idLocale).format(date))
+                names.add(SimpleDateFormat("E", idLocale).format(date))
+                names.add(SimpleDateFormat("EEEE", Locale.ENGLISH).format(date))
+                names.add(SimpleDateFormat("E", Locale.ENGLISH).format(date))
+                names.add(SimpleDateFormat("EEEE", Locale.getDefault()).format(date))
+                names.add(SimpleDateFormat("E", Locale.getDefault()).format(date))
+            } catch (_: Exception) {}
+
+            return names.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        }
+
+        fun findRuteForToday(rutes: List<RuteEntity>, calendar: Calendar = Calendar.getInstance()): RuteEntity? {
+            if (rutes.isEmpty()) return null
+            val dayNames = getTodayDayNames(calendar)
+
+            // 1. Priority 1: Exact case-insensitive match on hariKunjungan
+            val exactHariMatch = rutes.firstOrNull { rute ->
+                val cleanHari = rute.hariKunjungan.trim()
+                dayNames.any { cleanHari.equals(it, ignoreCase = true) }
+            }
+            if (exactHariMatch != null) return exactHariMatch
+
+            // 2. Priority 2: Word or token match in hariKunjungan (e.g. "Senin, Kamis", "Senin - Rabu")
+            val tokenHariMatch = rutes.firstOrNull { rute ->
+                val tokens = rute.hariKunjungan.split(Regex("[^a-zA-Z0-9'áéíóúÁÉÍÓÚ]")).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+                dayNames.any { dayName ->
+                    val dnLower = dayName.lowercase()
+                    tokens.contains(dnLower) || rute.hariKunjungan.contains(dayName, ignoreCase = true)
+                }
+            }
+            if (tokenHariMatch != null) return tokenHariMatch
+
+            // 3. Priority 3: Word/token or contains match in namaRute (e.g. "Rute 4 (Senin)", "Rute 4 hari nya senin", "Rute 4 Sabtu")
+            val nameMatch = rutes.firstOrNull { rute ->
+                val tokens = rute.namaRute.split(Regex("[^a-zA-Z0-9'áéíóúÁÉÍÓÚ]")).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+                dayNames.any { dayName ->
+                    val dnLower = dayName.lowercase()
+                    tokens.contains(dnLower) || rute.namaRute.contains(dayName, ignoreCase = true)
+                }
+            }
+            if (nameMatch != null) return nameMatch
+
+            return null
+        }
+    }
+}
+
+data class ClosingProductSummary(
+    val productId: String,
+    val productName: String,
+    val pabrikId: String,
+    val pabrikName: String,
+    val satuanBesar: String = "Pack",
+    val rasioKonversi: Int,
+    val hargaBeliPabrikDus: Double,
+    val totalMuatDus: Int,
+    val totalMuatPcs: Int,
+    val sisaDusSore: Int,
+    val sisaPcsLepasanSore: Int,
+    val sisaTotalPcsSore: Int,
+    val pcsTerdistribusi: Int,
+    val terjualDusEquivalent: Double,
+    val tagihanPabrik: Double
+)
+
+data class ClosingSupplierSummary(
+    val pabrikId: String,
+    val pabrikName: String,
+    val products: List<ClosingProductSummary>,
+    val totalMuatDus: Int,
+    val sisaDusSore: Int,
+    val sisaPcsLepasanSore: Int,
+    val sisaTotalPcsSore: Int,
+    val pcsTerdistribusi: Int,
+    val totalTerjualDusEquivalent: Double,
+    val totalTagihanPabrik: Double
+)
+
+data class ClosingSummaryData(
+    val tanggal: String,
+    val waktuClosing: String,
+    val totalMuatDus: Int,
+    val totalTagihanSemuaSupplier: Double,
+    val totalKasWarungHariIni: Double,
+    val selisihKas: Double,
+    val totalTxCount: Int,
+    val totalSortirTodayPcs: Int,
+    val supplierSummaries: List<ClosingSupplierSummary> = emptyList(),
+    val productSummaries: List<ClosingProductSummary> = emptyList(),
+    val productName: String = "",
+    val sisaDusSore: Int = 0,
+    val sisaPcsLepasan: Int = 0,
+    val terjualDus: Int = 0,
+    val tagihanPabrikFinal: Double = totalTagihanSemuaSupplier
+)
+
+sealed class TransactionDialogState {
+    data class TitipBaru(val warung: WarungEntity) : TransactionDialogState()
+    data class TarikSisa(val warung: WarungEntity) : TransactionDialogState()
+    object ClosingSore : TransactionDialogState()
+    data class AddEditProduct(val product: ProductEntity?) : TransactionDialogState()
+    data class AddEditWarung(val warung: WarungEntity?) : TransactionDialogState()
+    data class AddEditRute(val rute: RuteEntity?) : TransactionDialogState()
+    data class AddEditPabrik(val pabrik: PabrikEntity?) : TransactionDialogState()
+    data class WriteOff(val warung: WarungEntity) : TransactionDialogState()
+    data class WarungDetail(val warung: WarungEntity) : TransactionDialogState()
+    data class OutletStatistics(val warung: WarungEntity) : TransactionDialogState()
+    data class ManageCustomPrices(val warung: WarungEntity) : TransactionDialogState()
+    object SetupProfile : TransactionDialogState()
+    object GpsTool : TransactionDialogState()
+    object ExportBackup : TransactionDialogState()
+    object ImportBackup : TransactionDialogState()
+    data class EditConfig(val key: String, val currentVal: String) : TransactionDialogState()
+    object AiCopilot : TransactionDialogState()
+    object AiConfigSettings : TransactionDialogState()
+    data class AiOutletRecommendation(val warung: WarungEntity) : TransactionDialogState()
+    data class BayarHutangSupplier(val loading: DailyLoadingEntity) : TransactionDialogState()
+    object TerimaKirimanMingguan : TransactionDialogState()
+    object RekapMingguanBos : TransactionDialogState()
+
+    // Personal Finance Dialog States
+    data class AddEditPersonalAccount(val account: PersonalAccountEntity?) : TransactionDialogState()
+    data class AddPersonalExpense(val defaultJenis: String = "PENGELUARAN") : TransactionDialogState()
+    data class AddEditPersonalDebt(val debt: PersonalDebtEntity?) : TransactionDialogState()
+    data class BayarCicilanHutang(val debt: PersonalDebtEntity) : TransactionDialogState()
+}

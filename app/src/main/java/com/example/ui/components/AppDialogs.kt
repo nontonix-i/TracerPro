@@ -1,0 +1,7445 @@
+package com.example.ui.components
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import android.location.LocationManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import coil.compose.AsyncImage
+import com.example.data.local.entity.*
+import com.example.data.repository.*
+import com.example.ui.theme.*
+import com.example.ui.viewmodel.*
+import com.example.util.LocationHelper
+import com.example.util.LocalAppLanguage
+import com.example.util.AppStrings.tr
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@Composable
+fun AppDialogsHost(
+    viewModel: SfaViewModel
+) {
+    val lang = LocalAppLanguage.current
+
+    val activeDialog by viewModel.activeTransactionDialog.collectAsState()
+    val receiptTx by viewModel.showReceiptDialog.collectAsState()
+    val receiptListTx by viewModel.showReceiptListDialog.collectAsState()
+    val closingReceiptData by viewModel.showClosingReceipt.collectAsState()
+    val warungs by viewModel.warungs.collectAsState()
+    val products by viewModel.products.collectAsState()
+    val drawers by viewModel.drawers.collectAsState()
+    val dailyLoadings by viewModel.dailyLoadings.collectAsState()
+    val rutes by viewModel.rutes.collectAsState()
+    val transactions by viewModel.transactions.collectAsState()
+    val bsSortirs by viewModel.bsSortirs.collectAsState()
+    val customPrices by viewModel.customPrices.collectAsState()
+    val pabriks by viewModel.pabriks.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val personalAccounts by viewModel.personalAccounts.collectAsState()
+    val personalDebts by viewModel.personalDebts.collectAsState()
+
+    receiptTx?.let { tx ->
+        val warung = warungs.find { it.id == tx.warungId }
+        val product = products.find { it.id == tx.productId }
+        ReceiptDialog(
+            transaction = tx,
+            warung = warung,
+            product = product,
+            userProfile = userProfile,
+            onDismiss = { viewModel.closeReceipt() }
+        )
+    }
+
+    receiptListTx?.let { txList ->
+        val warung = warungs.find { it.id == txList.firstOrNull()?.warungId }
+        ReceiptDialog(
+            transactions = txList,
+            warung = warung,
+            products = products,
+            userProfile = userProfile,
+            onDismiss = { viewModel.closeReceiptList() }
+        )
+    }
+
+    closingReceiptData?.let { closingData ->
+        ClosingReceiptDialog(
+            data = closingData,
+            userProfile = userProfile,
+            onDismiss = { viewModel.closeClosingReceipt() }
+        )
+    }
+
+    when (val state = activeDialog) {
+        is TransactionDialogState.TitipBaru -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            TitipBaruDialog(
+                warung = currentWarung,
+                products = products,
+                drawers = drawers,
+                dailyLoadings = dailyLoadings,
+                customPrices = customPrices,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmit = { productId, sumber, qty, harga, lat, lng, addr, note ->
+                    viewModel.executeTitipBaru(
+                        warung = currentWarung,
+                        productId = productId,
+                        sumberStok = sumber,
+                        jumlahPcs = qty,
+                        hargaSatuan = harga,
+                        gpsLat = lat,
+                        gpsLng = lng,
+                        gpsAddress = addr,
+                        catatan = note
+                    )
+                },
+                onBatchSubmit = { items, lat, lng, addr, note ->
+                    viewModel.executeBatchTitipBaru(
+                        warung = currentWarung,
+                        items = items,
+                        gpsLat = lat,
+                        gpsLng = lng,
+                        gpsAddress = addr,
+                        catatan = note
+                    )
+                }
+            )
+        }
+        is TransactionDialogState.TarikSisa -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            TarikSisaDialog(
+                warung = currentWarung,
+                products = products,
+                drawers = drawers,
+                dailyLoadings = dailyLoadings,
+                transactions = transactions,
+                customPrices = customPrices,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmit = { productId, sisaLalu, sisaFisik, harga, bayar, restock, sumber, lat, lng, addr, note, tarikLayak, tarikBs ->
+                    viewModel.executeTarikSisaDanRestock(
+                        warung = currentWarung,
+                        productId = productId,
+                        sisaTitipanLalu = sisaLalu,
+                        sisaFisik = sisaFisik,
+                        hargaSatuan = harga,
+                        uangDiterima = bayar,
+                        restockPcs = restock,
+                        sumberRestock = sumber,
+                        gpsLat = lat,
+                        gpsLng = lng,
+                        gpsAddress = addr,
+                        catatan = note,
+                        tarikLayakPcs = tarikLayak,
+                        tarikBsPcs = tarikBs
+                    )
+                },
+                onBatchSubmit = { items, bayar, lat, lng, addr, note ->
+                    viewModel.executeBatchTarikSisaDanRestock(
+                        warung = currentWarung,
+                        items = items,
+                        uangDiterima = bayar,
+                        gpsLat = lat,
+                        gpsLng = lng,
+                        gpsAddress = addr,
+                        catatan = note
+                    )
+                }
+            )
+        }
+        is TransactionDialogState.ClosingSore -> {
+            ClosingSoreDialog(
+                loadings = dailyLoadings,
+                products = products,
+                pabriks = pabriks,
+                drawers = drawers,
+                transactions = transactions,
+                bsSortirs = bsSortirs,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmitBatch = { items, summary ->
+                    viewModel.executeBatchClosingSore(items, summary)
+                }
+            )
+        }
+        is TransactionDialogState.WriteOff -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            WriteOffDialog(
+                warung = currentWarung,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmit = { harga, alasan ->
+                    viewModel.executeWriteOff(currentWarung, harga, alasan)
+                }
+            )
+        }
+        is TransactionDialogState.AddEditProduct -> {
+            AddEditProductDialog(
+                product = state.product,
+                pabriks = pabriks,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.addOrUpdateProduct(it) }
+            )
+        }
+        is TransactionDialogState.AddEditWarung -> {
+            AddEditWarungDialog(
+                warung = state.warung,
+                rutes = rutes,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.addOrUpdateWarung(it) }
+            )
+        }
+        is TransactionDialogState.AddEditRute -> {
+            AddEditRuteDialog(
+                rute = state.rute,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.addOrUpdateRute(it) }
+            )
+        }
+        is TransactionDialogState.AddEditPabrik -> {
+            AddEditPabrikDialog(
+                pabrik = state.pabrik,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.addOrUpdatePabrik(it) }
+            )
+        }
+        is TransactionDialogState.WarungDetail -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            WarungDetailDialog(
+                warung = currentWarung,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onWriteOff = {
+                    viewModel.openTransactionDialog(TransactionDialogState.WriteOff(currentWarung))
+                },
+                onManageCustomPrices = {
+                    viewModel.openTransactionDialog(TransactionDialogState.ManageCustomPrices(currentWarung))
+                },
+                onViewStatistics = {
+                    viewModel.openTransactionDialog(TransactionDialogState.OutletStatistics(currentWarung))
+                }
+            )
+        }
+        is TransactionDialogState.OutletStatistics -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            val warungTx = transactions.filter { it.warungId == currentWarung.id }
+            OutletStatisticsDialog(
+                warung = currentWarung,
+                transactions = warungTx,
+                products = products,
+                userProfile = userProfile,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onTitipBaru = {
+                    viewModel.openTransactionDialog(TransactionDialogState.TitipBaru(currentWarung))
+                },
+                onTarikSisa = {
+                    viewModel.openTransactionDialog(TransactionDialogState.TarikSisa(currentWarung))
+                },
+                onManageCustomPrices = {
+                    viewModel.openTransactionDialog(TransactionDialogState.ManageCustomPrices(currentWarung))
+                },
+                onAiRecommendation = {
+                    viewModel.openTransactionDialog(TransactionDialogState.AiOutletRecommendation(currentWarung))
+                }
+            )
+        }
+        is TransactionDialogState.ManageCustomPrices -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            ManageCustomPricesDialog(
+                warung = currentWarung,
+                products = products,
+                customPrices = customPrices,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSaveCustomPrice = { productId, price ->
+                    viewModel.setCustomPrice(currentWarung.id, productId, price)
+                },
+                onDeleteCustomPrice = { productId ->
+                    viewModel.deleteCustomPrice(currentWarung.id, productId)
+                }
+            )
+        }
+        is TransactionDialogState.SetupProfile -> {
+            UserProfileDialog(
+                currentProfile = userProfile,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.saveUserProfile(it) }
+            )
+        }
+        is TransactionDialogState.GpsTool -> {
+            GpsToolDialog(onDismiss = { viewModel.closeTransactionDialog() })
+        }
+        is TransactionDialogState.ExportBackup -> {
+            ExportBackupDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.closeTransactionDialog() }
+            )
+        }
+        is TransactionDialogState.ImportBackup -> {
+            ImportBackupDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.closeTransactionDialog() }
+            )
+        }
+        is TransactionDialogState.AiCopilot -> {
+            AiCopilotDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onOpenSettings = {
+                    viewModel.openTransactionDialog(TransactionDialogState.AiConfigSettings)
+                }
+            )
+        }
+        is TransactionDialogState.AiConfigSettings -> {
+            AiConfigDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.closeTransactionDialog() }
+            )
+        }
+        is TransactionDialogState.AiOutletRecommendation -> {
+            val currentWarung = warungs.find { it.id == state.warung.id } ?: state.warung
+            AiOutletRecommendationDialog(
+                warung = currentWarung,
+                viewModel = viewModel,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onTitipBaruClicked = {
+                    viewModel.openTransactionDialog(TransactionDialogState.TitipBaru(currentWarung))
+                }
+            )
+        }
+        is TransactionDialogState.BayarHutangSupplier -> {
+            BayarHutangSupplierDialog(
+                loading = state.loading,
+                products = products,
+                pabriks = pabriks,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onConfirmPay = { amount ->
+                    val prod = products.find { it.id == state.loading.productId }
+                    viewModel.executePayLoadingDebt(state.loading.id, amount, prod?.nama ?: "")
+                }
+            )
+        }
+        is TransactionDialogState.TerimaKirimanMingguan -> {
+            TerimaKirimanMingguanDialog(
+                products = products,
+                drawers = drawers,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmitBatch = { items ->
+                    viewModel.executeBatchWeeklyShipment(items)
+                }
+            )
+        }
+        is TransactionDialogState.RekapMingguanBos -> {
+            viewModel.closeTransactionDialog()
+        }
+        is TransactionDialogState.EditConfig -> {
+            viewModel.closeTransactionDialog()
+        }
+        is TransactionDialogState.AddEditPersonalAccount -> {
+            AddEditPersonalAccountDialog(
+                account = state.account,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.savePersonalAccount(it) }
+            )
+        }
+        is TransactionDialogState.AddPersonalExpense -> {
+            AddPersonalExpenseDialog(
+                defaultJenis = state.defaultJenis,
+                accounts = personalAccounts,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSubmit = { jenis, kategori, nominal, accountId, toAccountId, judul, catatan ->
+                    viewModel.recordExpense(
+                        jenis = jenis,
+                        kategori = kategori,
+                        nominal = nominal,
+                        accountId = accountId,
+                        toAccountId = toAccountId,
+                        judul = judul,
+                        catatan = catatan
+                    )
+                }
+            )
+        }
+        is TransactionDialogState.AddEditPersonalDebt -> {
+            AddEditPersonalDebtDialog(
+                debt = state.debt,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onSave = { viewModel.savePersonalDebt(it) }
+            )
+        }
+        is TransactionDialogState.BayarCicilanHutang -> {
+            val currentDebt = personalDebts.find { it.id == state.debt.id } ?: state.debt
+            BayarCicilanHutangDialog(
+                debt = currentDebt,
+                accounts = personalAccounts,
+                onDismiss = { viewModel.closeTransactionDialog() },
+                onConfirmPay = { nominal, accountId, keterangan ->
+                    viewModel.recordDebtPayment(
+                        debt = currentDebt,
+                        bayarNominal = nominal,
+                        accountId = accountId,
+                        keterangan = keterangan
+                    )
+                }
+            )
+        }
+        null -> {}
+    }
+}
+
+// 1.0 DIALOG TERIMA KIRIMAN MINGGUAN DARI BOS / PABRIK (AKUMULASI KE POOL GUDANG RUMAH)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TerimaKirimanMingguanDialog(
+    products: List<ProductEntity>,
+    drawers: List<InventoryDrawerEntity> = emptyList(),
+    onDismiss: () -> Unit,
+    onSubmitBatch: (List<com.example.data.repository.WeeklyShipmentInput>) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+    var quantities by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var nomorSuratJalan by remember { mutableStateOf("") }
+    var catatan by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+
+    val categories = remember(products) {
+        products.map { it.kategori }.filter { it.isNotBlank() }.distinct()
+    }
+
+    val filteredProducts = remember(products, searchQuery, selectedCategory) {
+        products.filter { prod ->
+            val matchSearch = searchQuery.isBlank() ||
+                prod.nama.contains(searchQuery, ignoreCase = true) ||
+                prod.kategori.contains(searchQuery, ignoreCase = true)
+            val matchCat = selectedCategory == null || prod.kategori == selectedCategory
+            matchSearch && matchCat
+        }
+    }
+
+    val totalPack = remember(quantities) {
+        quantities.values.sumOf { it.toIntOrNull() ?: 0 }
+    }
+
+    val totalEstimasiNilai = remember(quantities, products) {
+        quantities.entries.sumOf { (productId, qtyStr) ->
+            val qty = qtyStr.toIntOrNull() ?: 0
+            val prod = products.find { it.id == productId }
+            if (prod != null) qty * prod.hargaBeliPabrik else 0.0
+        }
+    }
+
+    val totalPcsAll = remember(quantities, products) {
+        quantities.entries.sumOf { (productId, qtyStr) ->
+            val qty = qtyStr.toIntOrNull() ?: 0
+            val prod = products.find { it.id == productId }
+            if (prod != null) qty * prod.rasioKonversi else 0
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.92f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Header Dialog
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Slate900),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Inventory2,
+                                contentDescription = null,
+                                tint = AmberWarning,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Terima Kiriman Mingguan (Bos)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900
+                            )
+                            Text(
+                                text = "Akumulasi Jatah Baru ke Pool Gudang Rumah",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Slate500,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Tutup", tint = Slate500)
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                // Surat Jalan & Catatan Pengiriman
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = nomorSuratJalan,
+                        onValueChange = { nomorSuratJalan = it },
+                        label = { Text("No. Surat Jalan / DO (Opsional)", fontSize = 11.sp) },
+                        placeholder = { Text("Contoh: SJ-2026/09/W3", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = catatan,
+                        onValueChange = { catatan = it },
+                        label = { Text("Keterangan", fontSize = 11.sp) },
+                        placeholder = { Text("Contoh: Jatah Minggu ke-3", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Banner Info Akumulasi Stok: Sisa + Baru
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = BlueSurface.copy(alpha = 0.5f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BlueBorder.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "💡 Skema Akumulasi: Kiriman baru ini otomatis ditambahkan ke sisa barang minggu lalu di Pool Rumah (Contoh: Sisa 20 + Kirim 250 = 270 Pack).",
+                            fontSize = 11.sp,
+                            color = Slate800,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+
+                // Search & Filter
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Cari nama/kode produk...", fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Category Chips
+                if (categories.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedCategory == null,
+                            onClick = { selectedCategory = null },
+                            label = { Text("Semua (${products.size})", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Slate900,
+                                selectedLabelColor = Color.White,
+                                containerColor = Slate100,
+                                labelColor = Slate700
+                            ),
+                            border = null,
+                            modifier = Modifier.height(28.dp)
+                        )
+                        categories.forEach { cat ->
+                            val count = products.count { it.kategori == cat }
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = if (selectedCategory == cat) null else cat },
+                                label = { Text("$cat ($count)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Slate900,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = Slate100,
+                                    labelColor = Slate700
+                                ),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Products List
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredProducts, key = { it.id }) { product ->
+                        val currentQtyStr = quantities[product.id] ?: "0"
+                        val currentQty = currentQtyStr.toIntOrNull() ?: 0
+                        val drawer = drawers.find { it.productId == product.id }
+                        val poolPcsSekarang = drawer?.stokPoolGudangPcs ?: 0
+                        val rasio = product.rasioKonversi.coerceAtLeast(1)
+                        val poolPackSekarang = poolPcsSekarang / rasio
+                        val satuanBesarLabel = product.satuanBesar.ifBlank { "Pack" }
+                        val satuanKecilLabel = product.satuanKecil.ifBlank { "Pcs" }
+                        val incomingPcs = currentQty * rasio
+                        val totalPoolSetelahKiriman = poolPcsSekarang + incomingPcs
+                        val hasQty = currentQty > 0
+
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (hasQty) AmberWarning.copy(alpha = 0.08f) else Color.White
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.5.dp,
+                                if (hasQty) AmberWarning else Slate200
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(product.nama, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Slate900)
+                                        Text(
+                                            "1 $satuanBesarLabel = $rasio $satuanKecilLabel • Modal Pabrik: ${SfaViewModel.formatRupiah(product.hargaBeliPabrik)}/$satuanBesarLabel",
+                                            fontSize = 11.sp,
+                                            color = Slate500
+                                        )
+                                    }
+
+                                    // Pool Gudang Saat Ini
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Slate100
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                            horizontalAlignment = Alignment.End
+                                        ) {
+                                            Text(
+                                                "Sisa di Pool Rumah:",
+                                                fontSize = 9.sp,
+                                                color = Slate500
+                                            )
+                                            Text(
+                                                "$poolPackSekarang $satuanBesarLabel ($poolPcsSekarang $satuanKecilLabel)",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Slate800
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Stepper Row
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = (currentQty - 50).coerceAtLeast(0)
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("-50", fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    }
+
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = (currentQty - 10).coerceAtLeast(0)
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("-10", fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    }
+
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = (currentQty - 1).coerceAtLeast(0)
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    }
+
+                                    OutlinedTextField(
+                                        value = if (currentQty == 0 && currentQtyStr == "0") "" else currentQtyStr,
+                                        onValueChange = { input ->
+                                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                                quantities = quantities + (product.id to input)
+                                            }
+                                        },
+                                        placeholder = { Text("0", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+                                        textStyle = LocalTextStyle.current.copy(
+                                            textAlign = TextAlign.Center,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        ),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        colors = appTextFieldColors(),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                    )
+
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = currentQty + 1
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    }
+
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = currentQty + 10
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("+10", fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    }
+
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            val newQty = currentQty + 50
+                                            quantities = quantities + (product.id to newQty.toString())
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("+50", fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    }
+                                }
+
+                                if (hasQty) {
+                                    val totalPackSetelah = totalPoolSetelahKiriman / rasio
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(EmeraldSurface, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Masuk: +$currentQty $satuanBesarLabel (+$incomingPcs $satuanKecilLabel)",
+                                            fontSize = 10.sp,
+                                            color = EmeraldText,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Total Pool Baru: $totalPackSetelah $satuanBesarLabel ($totalPoolSetelahKiriman $satuanKecilLabel)",
+                                            fontSize = 10.sp,
+                                            color = Slate800,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                // Summary Total & Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Total Kiriman Masuk:",
+                            fontSize = 11.sp,
+                            color = Slate500
+                        )
+                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "$totalPack Pack",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900
+                            )
+                            Text(
+                                text = "($totalPcsAll Pcs)",
+                                fontSize = 11.sp,
+                                color = Slate600
+                            )
+                        }
+                        if (totalEstimasiNilai > 0) {
+                            Text(
+                                text = "Estimasi Nilai: ${SfaViewModel.formatRupiah(totalEstimasiNilai)}",
+                                fontSize = 10.sp,
+                                color = Slate500
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Batal")
+                        }
+
+                        Button(
+                            onClick = {
+                                val items = quantities.mapNotNull { (productId, qtyStr) ->
+                                    val qty = qtyStr.toIntOrNull() ?: 0
+                                    if (qty > 0) {
+                                        val prod = products.find { it.id == productId }
+                                        val rasio = prod?.rasioKonversi ?: 1
+                                        val hBeli = prod?.hargaBeliPabrik ?: 0.0
+                                        com.example.data.repository.WeeklyShipmentInput(
+                                            productId = productId,
+                                            jumlahPack = qty,
+                                            rasioKonversi = rasio,
+                                            hargaBeliPerPack = hBeli,
+                                            nomorDoAtauNota = nomorSuratJalan,
+                                            namaSupplier = "Pabrik / Bos",
+                                            catatan = catatan
+                                        )
+                                    } else null
+                                }
+                                onSubmitBatch(items)
+                            },
+                            enabled = totalPack > 0,
+                            colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (totalPack > 0) "Terima ($totalPack Pack)" else "Isi Jumlah",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 1.1 DIALOG PELUNASAN / PEMBAYARAN HUTANG SUPPLIER (MUAT BARANG)
+@Composable
+fun BayarHutangSupplierDialog(
+    loading: DailyLoadingEntity,
+    products: List<ProductEntity>,
+    pabriks: List<PabrikEntity>,
+    onDismiss: () -> Unit,
+    onConfirmPay: (Double) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val product = remember(products, loading.productId) { products.find { it.id == loading.productId } }
+    val pabrik = remember(pabriks, product?.pabrikId) { pabriks.find { it.id == product?.pabrikId } }
+    val satuanBesarLabel = product?.satuanBesar ?: "Pack"
+    val satuanKecilLabel = product?.satuanKecil ?: "Pcs"
+
+    var inputAmount by remember { mutableStateOf("") }
+    val bayarAmount = inputAmount.toDoubleOrNull() ?: 0.0
+    val newSisa = (loading.sisaHutangMuat - bayarAmount).coerceAtLeast(0.0)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White, contentColor = Slate900),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .padding(vertical = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(AmberWarning),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Payment, contentDescription = null, tint = Slate900, modifier = Modifier.size(20.dp))
+                        }
+                        Column {
+                            Text(tr("Bayar Hutang Supplier", "Pay Supplier Debt", lang), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Slate900)
+                            Text(tr("Pelunasan tagihan muat ke pabrik/supplier", "Payment of loading bill to factory/supplier", lang), fontSize = 11.sp, color = Slate500)
+                        }
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500)
+                    }
+                }
+
+                // Info Barang & Supplier Card
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Slate100),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(product?.nama ?: "Produk Muat", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Slate900)
+                        if (pabrik != null) {
+                            Text(tr("Supplier: ${pabrik.namaPabrik}", "Supplier: ${pabrik.namaPabrik}", lang), fontSize = 11.sp, color = Slate600)
+                        }
+                        Text(
+                            "Tanggal Muat: ${loading.tanggal} • Muat: ${loading.jumlahDus} $satuanBesarLabel (${loading.totalPcs} $satuanKecilLabel)",
+                            fontSize = 11.sp,
+                            color = Slate600
+                        )
+                        Text(
+                            "Harga Modal: ${SfaViewModel.formatRupiah(loading.hargaBeliPabrikDus)} / $satuanBesarLabel",
+                            fontSize = 11.sp,
+                            color = Slate500
+                        )
+                    }
+                }
+
+                // Financial Balance Card
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Slate900,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(tr("Total Hutang Awal:", "Initial Total Debt:", lang), color = Slate400, fontSize = 11.sp)
+                            Text(SfaViewModel.formatRupiah(loading.potensiHutangPabrik), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(tr("Sudah Dibayar Sebelumnya:", "Previously Paid:", lang), color = Slate400, fontSize = 11.sp)
+                            Text(SfaViewModel.formatRupiah(loading.jumlahBayarMuat), color = EmeraldSuccess, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(tr("SISA HUTANG SAAT INI:", "CURRENT REMAINING DEBT:", lang), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(SfaViewModel.formatRupiah(loading.sisaHutangMuat), color = AmberWarning, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                // Nominal Input
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(tr("Nominal Pembayaran Sekarang (Rp):", "Payment Amount Now (Rp):", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate700)
+                    OutlinedTextField(
+                        value = inputAmount,
+                        onValueChange = { input ->
+                            if (input.all { it.isDigit() }) inputAmount = input
+                        },
+                        placeholder = { Text(tr("Contoh: 100000", "Example: 100000", lang)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Quick Chips
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        SuggestionChip(
+                            onClick = { inputAmount = loading.sisaHutangMuat.toLong().toString() },
+                            label = { Text(tr("Lunas (${SfaViewModel.formatRupiah(loading.sisaHutangMuat)})", "Paid Off (${SfaViewModel.formatRupiah(loading.sisaHutangMuat)})", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = EmeraldSurface, labelColor = EmeraldText),
+                            border = null,
+                            modifier = Modifier.height(28.dp)
+                        )
+                        if (loading.sisaHutangMuat > 50000) {
+                            SuggestionChip(
+                                onClick = { inputAmount = "50000" },
+                                label = { Text("Rp 50.000", fontSize = 10.sp) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Slate100, labelColor = Slate700),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                        if (loading.sisaHutangMuat > 100000) {
+                            SuggestionChip(
+                                onClick = { inputAmount = "100000" },
+                                label = { Text("Rp 100.000", fontSize = 10.sp) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Slate100, labelColor = Slate700),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                        val half = (loading.sisaHutangMuat / 2).toLong()
+                        if (half > 0) {
+                            SuggestionChip(
+                                onClick = { inputAmount = half.toString() },
+                                label = { Text("50% (${SfaViewModel.formatRupiah(half.toDouble())})", fontSize = 10.sp) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Slate100, labelColor = Slate700),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Sisa Hutang Proyeksi
+                if (bayarAmount > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (newSisa <= 0) EmeraldSurface else Slate100,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(tr("Sisa Hutang Setelah Bayar:", "Remaining Debt After Payment:", lang), fontSize = 11.sp, color = Slate700)
+                            Text(
+                                if (newSisa <= 0) "LUNAS (Rp 0)" else SfaViewModel.formatRupiah(newSisa),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (newSisa <= 0) EmeraldText else RoseDanger
+                            )
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                        Text(tr("Batal", "Cancel", lang))
+                    }
+                    Button(
+                        onClick = {
+                            if (bayarAmount > 0) {
+                                onConfirmPay(bayarAmount)
+                            }
+                        },
+                        enabled = bayarAmount > 0,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(tr("Simpan Pembayaran", "Save Payment", lang))
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+// 2. TITIP BARU DIALOG (MULTI-SKU DROP KONSINYASI)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TitipBaruDialog(
+    warung: WarungEntity,
+    products: List<ProductEntity>,
+    drawers: List<InventoryDrawerEntity>,
+    dailyLoadings: List<DailyLoadingEntity> = emptyList(),
+    customPrices: List<WarungCustomPriceEntity> = emptyList(),
+    onDismiss: () -> Unit,
+    onSubmit: (productId: String, sumberStok: String, jumlahPcs: Int, hargaSatuan: Double, gpsLat: Double, gpsLng: Double, gpsAddr: String, catatan: String) -> Unit,
+    onBatchSubmit: ((items: List<BatchTitipItem>, gpsLat: Double, gpsLng: Double, gpsAddr: String, catatan: String) -> Unit)? = null
+) {
+    val lang = LocalAppLanguage.current
+
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+
+    // Map per productId: pack, eceran pcs, harga, sumber stok
+    val packInputs = remember { mutableStateMapOf<String, String>() }
+    val pcsInputs = remember { mutableStateMapOf<String, String>() }
+    val hargaInputs = remember { mutableStateMapOf<String, String>() }
+    val sumberInputs = remember { mutableStateMapOf<String, String>() }
+    var catatan by remember { mutableStateOf("") }
+
+    val categories = remember(products) {
+        products.map { it.kategori }.filter { it.isNotBlank() }.distinct()
+    }
+
+    val filteredProducts = remember(products, searchQuery, selectedCategory) {
+        products.filter { p ->
+            val matchSearch = searchQuery.isBlank() ||
+                p.nama.contains(searchQuery, ignoreCase = true) ||
+                p.kategori.contains(searchQuery, ignoreCase = true)
+            val matchCategory = selectedCategory == null || p.kategori == selectedCategory
+            matchSearch && matchCategory
+        }
+    }
+
+    fun getPack(pId: String): Int = packInputs[pId]?.toIntOrNull() ?: 0
+    fun getLoosePcs(pId: String): Int = pcsInputs[pId]?.toIntOrNull() ?: 0
+    fun getTotalPcs(p: ProductEntity): Int {
+        val rasio = p.rasioKonversi.coerceAtLeast(1)
+        return (getPack(p.id) * rasio) + getLoosePcs(p.id)
+    }
+    fun getEffectivePrice(p: ProductEntity): Double {
+        val custom = customPrices.find { it.warungId == warung.id && it.productId == p.id }
+        val def = custom?.hargaJualPcs ?: p.hargaJualDefault
+        return hargaInputs[p.id]?.toDoubleOrNull() ?: def
+    }
+    fun getSumber(pId: String): String = sumberInputs[pId] ?: "FRESH_PABRIK"
+
+    val activeItems = remember(packInputs.toMap(), pcsInputs.toMap(), hargaInputs.toMap(), sumberInputs.toMap(), products) {
+        products.mapNotNull { p ->
+            val totalPcs = getTotalPcs(p)
+            if (totalPcs > 0) {
+                BatchTitipItem(
+                    productId = p.id,
+                    sumberStok = getSumber(p.id),
+                    jumlahPcs = totalPcs,
+                    hargaSatuan = getEffectivePrice(p)
+                )
+            } else null
+        }
+    }
+
+    val totalSelectedSKU = activeItems.size
+    val totalPacks = products.sumOf { getPack(it.id) }
+    val totalPcsAll = activeItems.sumOf { it.jumlahPcs }
+    val totalNilaiTitipan = activeItems.sumOf { it.jumlahPcs * it.hargaSatuan }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Header Dialog
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Slate900),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Inventory,
+                                contentDescription = null,
+                                tint = AmberWarning,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Titip Baru / Drop Multi-SKU",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900
+                            )
+                            Text(
+                                text = "Toko: ${warung.namaWarung} • Titipan Aktif: ${warung.stokTitipanPcs} Pcs",
+                                fontSize = 11.sp,
+                                color = Slate600
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Slate500)
+                    }
+                }
+
+                // Search & Filter Category Row
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(tr("Cari nama produk / kategori...", "Search product / category...", lang), fontSize = 12.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Slate400, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Clear, contentDescription = null, tint = Slate400, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    singleLine = true
+                )
+
+                if (categories.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedCategory == null,
+                            onClick = { selectedCategory = null },
+                            label = { Text(tr("Semua (${products.size})", "All (${products.size})", lang), fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Slate900,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                        categories.forEach { cat ->
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = if (selectedCategory == cat) null else cat },
+                                label = { Text(cat, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Slate900,
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Scrollable Products List
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (filteredProducts.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            Text(tr("Tidak ada produk ditemukan", "No products found", lang), color = Slate400, fontSize = 12.sp)
+                        }
+                    } else {
+                        filteredProducts.forEach { prod ->
+                            val pId = prod.id
+                            val custom = customPrices.find { it.warungId == warung.id && it.productId == pId }
+                            val effectivePrice = custom?.hargaJualPcs ?: prod.hargaJualDefault
+                            val drawer = drawers.find { it.productId == pId }
+                            val rasio = prod.rasioKonversi.coerceAtLeast(1)
+                            val satuanBesar = prod.satuanBesar.ifBlank { "Pack" }
+                            val satuanKecil = prod.satuanKecil.ifBlank { "Pcs" }
+
+                            val packVal = packInputs[pId] ?: ""
+                            val pcsVal = pcsInputs[pId] ?: ""
+                            val packNum = packVal.toIntOrNull() ?: 0
+                            val pcsNum = pcsVal.toIntOrNull() ?: 0
+                            val totalPcs = (packNum * rasio) + pcsNum
+
+                            val currentHarga = getEffectivePrice(prod)
+                            val currentSumber = getSumber(pId)
+                            val isSelected = totalPcs > 0
+
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) Color(0xFFF0FDF4) else Color.White
+                                ),
+                                border = CardDefaults.outlinedCardBorder().copy(
+                                    brush = androidx.compose.ui.graphics.SolidColor(
+                                        if (isSelected) EmeraldSuccess else Slate200
+                                    )
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Row 1: Nama & Badges
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(
+                                                    text = prod.nama,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = Slate900
+                                                )
+                                                if (custom != null) {
+                                                    Surface(shape = RoundedCornerShape(4.dp), color = EmeraldSurface) {
+                                                        Text("Harga Khusus", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = EmeraldText, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                                    }
+                                                }
+                                            }
+                                            Text(
+                                                text = "Rasio: 1 $satuanBesar = $rasio $satuanKecil • Normal: ${SfaViewModel.formatRupiah(effectivePrice)}/$satuanKecil",
+                                                fontSize = 10.sp,
+                                                color = Slate500
+                                            )
+                                        }
+
+                                        // Badge Sisa Stok di Mobil
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                text = "Stok Mobil",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Slate500
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Surface(shape = RoundedCornerShape(4.dp), color = Slate100) {
+                                                    Text("Fresh: ${drawer?.stokFreshPabrikPcs ?: 0}", fontSize = 9.sp, color = Slate700, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                                }
+                                                Surface(shape = RoundedCornerShape(4.dp), color = Slate100) {
+                                                    Text("Repack: ${drawer?.stokPribadiLayakJualPcs ?: 0}", fontSize = 9.sp, color = Slate700, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Row 2: Sumber Stok FilterChip
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Sumber Stok:", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Slate600)
+                                        FilterChip(
+                                            selected = currentSumber == "FRESH_PABRIK",
+                                            onClick = { sumberInputs[pId] = "FRESH_PABRIK" },
+                                            label = { Text("Fresh Pabrik (${drawer?.stokFreshPabrikPcs ?: 0})", fontSize = 10.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = Slate800,
+                                                selectedLabelColor = Color.White
+                                            ),
+                                            modifier = Modifier.height(28.dp)
+                                        )
+                                        FilterChip(
+                                            selected = currentSumber == "PRIBADI_REPACK",
+                                            onClick = { sumberInputs[pId] = "PRIBADI_REPACK" },
+                                            label = { Text("Pribadi Repack (${drawer?.stokPribadiLayakJualPcs ?: 0})", fontSize = 10.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = EmeraldSuccess,
+                                                selectedLabelColor = Color.White
+                                            ),
+                                            modifier = Modifier.height(28.dp)
+                                        )
+                                    }
+
+                                    // Row 3: Input Pack, Eceran Pcs, & Harga
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Input Pack dengan Quick Stepper
+                                        Column(modifier = Modifier.weight(1.3f)) {
+                                            Text("Jml $satuanBesar:", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Slate700)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                FilledTonalIconButton(
+                                                    onClick = {
+                                                        val next = (packNum - 1).coerceAtLeast(0)
+                                                        packInputs[pId] = if (next == 0) "" else next.toString()
+                                                    },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                }
+                                                OutlinedTextField(
+                                                    value = packVal,
+                                                    onValueChange = { packInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                                    placeholder = { Text("0", fontSize = 12.sp) },
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    colors = appTextFieldColors(),
+                                                    modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    singleLine = true,
+                                                    textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                )
+                                                FilledTonalIconButton(
+                                                    onClick = {
+                                                        val next = packNum + 1
+                                                        packInputs[pId] = next.toString()
+                                                    },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                }
+                                            }
+                                        }
+
+                                        // Input Eceran Pcs
+                                        Column(modifier = Modifier.weight(0.9f)) {
+                                            Text("Eceran $satuanKecil:", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Slate700)
+                                            OutlinedTextField(
+                                                value = pcsVal,
+                                                onValueChange = { pcsInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                                placeholder = { Text("0", fontSize = 12.sp) },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                colors = appTextFieldColors(),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(8.dp),
+                                                singleLine = true,
+                                                textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontSize = 12.sp)
+                                            )
+                                        }
+
+                                        // Input Harga Satuan
+                                        Column(modifier = Modifier.weight(1.1f)) {
+                                            Text("Harga Rp/$satuanKecil:", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Slate700)
+                                            OutlinedTextField(
+                                                value = hargaInputs[pId] ?: "${currentHarga.toLong()}",
+                                                onValueChange = { hargaInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                colors = appTextFieldColors(),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(8.dp),
+                                                singleLine = true,
+                                                textStyle = LocalTextStyle.current.copy(fontSize = 11.sp)
+                                            )
+                                        }
+                                    }
+
+                                    // Quick Pack preset chips
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Pilih cepat:", fontSize = 9.sp, color = Slate500)
+                                        listOf(1, 2, 3, 5, 10).forEach { pPreset ->
+                                            SuggestionChip(
+                                                onClick = { packInputs[pId] = pPreset.toString() },
+                                                label = { Text("$pPreset $satuanBesar", fontSize = 9.sp) },
+                                                modifier = Modifier.height(24.dp)
+                                            )
+                                        }
+                                        if (isSelected) {
+                                            TextButton(
+                                                onClick = {
+                                                    packInputs[pId] = ""
+                                                    pcsInputs[pId] = ""
+                                                },
+                                                modifier = Modifier.height(24.dp)
+                                            ) {
+                                                Text("Reset", fontSize = 9.sp, color = AmberWarning)
+                                            }
+                                        }
+                                    }
+
+                                    // Row 4: Live Subtotal Chip if selected
+                                    if (isSelected) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = EmeraldSurface,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Drop: $packNum $satuanBesar" + (if (pcsNum > 0) " + $pcsNum $satuanKecil" else "") + " = $totalPcs $satuanKecil",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = EmeraldText
+                                                )
+                                                Text(
+                                                    text = "Subtotal: ${SfaViewModel.formatRupiah(totalPcs * currentHarga)}",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = EmeraldText
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Summary & Actions Card
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Slate50),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate300)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Total SKU: $totalSelectedSKU SKU ($totalPacks Pack / $totalPcsAll Pcs)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate800
+                            )
+                            Text(
+                                text = SfaViewModel.formatRupiah(totalNilaiTitipan),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldSuccess
+                            )
+                        }
+
+                        // Catatan
+                        OutlinedTextField(
+                            value = catatan,
+                            onValueChange = { catatan = it },
+                            placeholder = { Text(tr("Catatan tambahan titipan...", "Additional consignment notes...", lang), fontSize = 11.sp) },
+                            colors = appTextFieldColors(),
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            singleLine = true
+                        )
+
+                        // GPS Tagging Verified
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.GpsFixed, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(14.dp))
+                            Text(
+                                text = "GPS Check-in: ${String.format(Locale.US, "%.4f", warung.latitude)}, ${String.format(Locale.US, "%.4f", warung.longitude)} (Akurasi: ${warung.akurasiGpsMeter}m)",
+                                fontSize = 9.sp,
+                                color = Slate600
+                            )
+                        }
+                    }
+                }
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(tr("Batal", "Cancel", lang), fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            if (activeItems.isNotEmpty()) {
+                                if (onBatchSubmit != null) {
+                                    onBatchSubmit(
+                                        activeItems,
+                                        warung.latitude,
+                                        warung.longitude,
+                                        warung.alamatLengkap,
+                                        catatan
+                                    )
+                                } else {
+                                    val first = activeItems.first()
+                                    onSubmit(
+                                        first.productId,
+                                        first.sumberStok,
+                                        first.jumlahPcs,
+                                        first.hargaSatuan,
+                                        warung.latitude,
+                                        warung.longitude,
+                                        warung.alamatLengkap,
+                                        catatan
+                                    )
+                                }
+                            }
+                        },
+                        enabled = totalSelectedSKU > 0,
+                        modifier = Modifier.weight(1.6f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (totalSelectedSKU > 0) "Simpan Drop ($totalSelectedSKU SKU)" else tr("Simpan Titipan", "Save Consignment", lang),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+// 3. TARIK SISA & GANTI BARANG DIALOG (MASTER PLAN FLOW 4.2 SKENARIO B - MULTI-SKU RESTOCK)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TarikSisaDialog(
+    warung: WarungEntity,
+    products: List<ProductEntity>,
+    drawers: List<InventoryDrawerEntity>,
+    dailyLoadings: List<DailyLoadingEntity> = emptyList(),
+    transactions: List<TransactionEntity> = emptyList(),
+    customPrices: List<WarungCustomPriceEntity> = emptyList(),
+    onDismiss: () -> Unit,
+    onSubmit: (productId: String, sisaLalu: Int, sisaFisik: Int, harga: Double, bayar: Double, restock: Int, sumberRestock: String, lat: Double, lng: Double, addr: String, note: String, tarikLayak: Int, tarikBs: Int) -> Unit,
+    onBatchSubmit: ((items: List<BatchTarikSisaItem>, uangDiterima: Double, lat: Double, lng: Double, addr: String, note: String) -> Unit)? = null
+) {
+    val lang = LocalAppLanguage.current
+
+    // Deteksi titipan lalu per produk dari riwayat transaksi
+    val warungProductTxs = remember(warung.id, transactions) {
+        transactions.filter { it.warungId == warung.id }
+    }
+
+    fun getLastTitipanForProduct(pId: String): Int {
+        val tx = warungProductTxs.filter { it.productId == pId }.maxByOrNull { it.timestamp }
+        return tx?.totalTitipanAktifPcs ?: 0
+    }
+
+    // State maps per productId
+    val sisaLaluInputs = remember { mutableStateMapOf<String, String>() }
+    val sisaFisikInputs = remember { mutableStateMapOf<String, String>() }
+    val tarikLayakInputs = remember { mutableStateMapOf<String, String>() }
+    val tarikBsInputs = remember { mutableStateMapOf<String, String>() }
+    val restockPackInputs = remember { mutableStateMapOf<String, String>() }
+    val restockPcsInputs = remember { mutableStateMapOf<String, String>() }
+    val sumberRestockInputs = remember { mutableStateMapOf<String, String>() }
+    val hargaInputs = remember { mutableStateMapOf<String, String>() }
+
+    var bayarInput by remember { mutableStateOf("") }
+    var bayarInitialized by remember { mutableStateOf(false) }
+    var catatanTransaksi by remember { mutableStateOf(warung.notes) }
+    var searchQuery by remember { mutableStateOf("") }
+    var activeTab by remember { mutableStateOf(0) } // 0 = SKU Titipan Aktif Toko, 1 = Semua SKU / Tambah Restock
+
+    // Inisialisasi awal titipan lalu per produk
+    LaunchedEffect(products, warung.id) {
+        val hadAnyPrevious = products.any { getLastTitipanForProduct(it.id) > 0 }
+        products.forEach { prod ->
+            val lastPcs = getLastTitipanForProduct(prod.id)
+            if (lastPcs > 0) {
+                sisaLaluInputs[prod.id] = lastPcs.toString()
+                val rasio = prod.rasioKonversi.coerceAtLeast(1)
+                val defPack = (lastPcs / rasio).coerceAtLeast(1)
+                val defLepas = lastPcs % rasio
+                restockPackInputs[prod.id] = defPack.toString()
+                if (defLepas > 0) restockPcsInputs[prod.id] = defLepas.toString()
+            } else if (!hadAnyPrevious && warung.stokTitipanPcs > 0 && products.indexOf(prod) == 0) {
+                // Fallback jika hanya tercatat total di warung tapi tanpa breakdown per produk
+                sisaLaluInputs[prod.id] = warung.stokTitipanPcs.toString()
+                val rasio = prod.rasioKonversi.coerceAtLeast(1)
+                val defPack = (warung.stokTitipanPcs / rasio).coerceAtLeast(1)
+                restockPackInputs[prod.id] = defPack.toString()
+            }
+        }
+    }
+
+    fun getSisaLalu(p: ProductEntity): Int = sisaLaluInputs[p.id]?.toIntOrNull() ?: getLastTitipanForProduct(p.id)
+    fun getSisaFisik(p: ProductEntity): Int = sisaFisikInputs[p.id]?.toIntOrNull() ?: 0
+    fun getEffectivePrice(p: ProductEntity): Double {
+        val custom = customPrices.find { it.warungId == warung.id && it.productId == p.id }
+        val def = custom?.hargaJualPcs ?: p.hargaJualDefault
+        return hargaInputs[p.id]?.toDoubleOrNull() ?: def
+    }
+    fun getRestockPcs(p: ProductEntity): Int {
+        val rasio = p.rasioKonversi.coerceAtLeast(1)
+        val pack = restockPackInputs[p.id]?.toIntOrNull() ?: 0
+        val loose = restockPcsInputs[p.id]?.toIntOrNull() ?: 0
+        return (pack * rasio) + loose
+    }
+    fun getSumberRestock(pId: String): String = sumberRestockInputs[pId] ?: "FRESH_PABRIK"
+
+    // Perhitungan total laku seluruh produk
+    val totalSubtotalLaku = remember(sisaLaluInputs.toMap(), sisaFisikInputs.toMap(), hargaInputs.toMap(), products) {
+        products.sumOf { p ->
+            val lalu = getSisaLalu(p)
+            val fisik = getSisaFisik(p)
+            val laku = (lalu - fisik).coerceAtLeast(0)
+            laku * getEffectivePrice(p)
+        }
+    }
+
+    val grandTotalTagihan = totalSubtotalLaku + warung.saldoPiutang
+
+    // Auto-fill bayar dengan grandTotalTagihan saat pertama kali
+    LaunchedEffect(grandTotalTagihan) {
+        if (!bayarInitialized && grandTotalTagihan > 0) {
+            bayarInput = grandTotalTagihan.toLong().toString()
+            bayarInitialized = true
+        }
+    }
+
+    val uangDiterima = bayarInput.toDoubleOrNull() ?: 0.0
+    val sisaPiutangBaru = (grandTotalTagihan - uangDiterima).coerceAtLeast(0.0)
+
+    val activeSKUProducts = remember(products, sisaLaluInputs.toMap(), restockPackInputs.toMap(), restockPcsInputs.toMap(), sisaFisikInputs.toMap()) {
+        products.filter { p ->
+            getSisaLalu(p) > 0 || getSisaFisik(p) > 0 || getRestockPcs(p) > 0
+        }
+    }
+
+    val totalRestockPcsAll = products.sumOf { getRestockPcs(it) }
+    val totalReturLayakAll = products.sumOf { p ->
+        val fisik = getSisaFisik(p)
+        val layak = tarikLayakInputs[p.id]?.toIntOrNull() ?: fisik
+        layak.coerceIn(0, fisik)
+    }
+    val totalReturBsAll = products.sumOf { p ->
+        val fisik = getSisaFisik(p)
+        val layak = tarikLayakInputs[p.id]?.toIntOrNull() ?: fisik
+        (fisik - layak).coerceAtLeast(0)
+    }
+
+    val displayProducts = remember(products, activeTab, searchQuery, activeSKUProducts) {
+        val baseList = if (activeTab == 0) {
+            if (activeSKUProducts.isNotEmpty()) activeSKUProducts else products
+        } else {
+            products
+        }
+        if (searchQuery.isBlank()) baseList else baseList.filter { it.nama.contains(searchQuery, ignoreCase = true) || it.kategori.contains(searchQuery, ignoreCase = true) }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.White,
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Header Dialog
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Slate900),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapHoriz,
+                                contentDescription = null,
+                                tint = EmeraldSuccess,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Tarik Sisa & Restock Multi-SKU",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900
+                            )
+                            Text(
+                                text = "Outlet: ${warung.namaWarung} • Titipan Aktif: ${warung.stokTitipanPcs} Pcs",
+                                fontSize = 11.sp,
+                                color = Slate600
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Slate500)
+                    }
+                }
+
+                // Tabs: SKU Toko vs Semua SKU
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = activeTab == 0,
+                        onClick = { activeTab = 0 },
+                        label = { Text("SKU Aktif Toko (${activeSKUProducts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White),
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = activeTab == 1,
+                        onClick = { activeTab = 1 },
+                        label = { Text("Semua / Ganti SKU (${products.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Search field if browsing all
+                if (activeTab == 1 || products.size > 5) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text(tr("Cari SKU produk pengganti...", "Search replacement SKU...", lang), fontSize = 11.sp) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Slate400, modifier = Modifier.size(16.dp)) },
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        singleLine = true
+                    )
+                }
+
+                // List of Products for Tarik Sisa & Restock
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    displayProducts.forEach { prod ->
+                        val pId = prod.id
+                        val rasio = prod.rasioKonversi.coerceAtLeast(1)
+                        val satuanBesar = prod.satuanBesar.ifBlank { "Pack" }
+                        val satuanKecil = prod.satuanKecil.ifBlank { "Pcs" }
+                        val custom = customPrices.find { it.warungId == warung.id && it.productId == pId }
+                        val drawer = drawers.find { it.productId == pId }
+
+                        val sisaLalu = getSisaLalu(prod)
+                        val sisaFisik = getSisaFisik(prod)
+                        val pcsLaku = (sisaLalu - sisaFisik).coerceAtLeast(0)
+                        val currentHarga = getEffectivePrice(prod)
+                        val subtotalLaku = pcsLaku * currentHarga
+
+                        val restockPack = restockPackInputs[pId]?.toIntOrNull() ?: 0
+                        val restockPcsLepas = restockPcsInputs[pId]?.toIntOrNull() ?: 0
+                        val totalRestock = (restockPack * rasio) + restockPcsLepas
+                        val currentSumber = getSumberRestock(pId)
+
+                        val isProcessed = sisaLalu > 0 || sisaFisik > 0 || totalRestock > 0
+
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (isProcessed) Color(0xFFF8FAFC) else Color.White),
+                            border = CardDefaults.outlinedCardBorder().copy(
+                                brush = androidx.compose.ui.graphics.SolidColor(if (isProcessed) BlueAccent else Slate200)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // Product Header
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(prod.nama, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Slate900)
+                                        Text("Rasio: 1 $satuanBesar = $rasio $satuanKecil • Mobil: Fresh ${drawer?.stokFreshPabrikPcs ?: 0} | Repack ${drawer?.stokPribadiLayakJualPcs ?: 0}", fontSize = 10.sp, color = Slate500)
+                                    }
+                                    if (sisaLalu > 0) {
+                                        Surface(shape = RoundedCornerShape(4.dp), color = Slate200) {
+                                            Text("Titip Lalu: $sisaLalu $satuanKecil", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate800, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                        }
+                                    }
+                                }
+
+                                // Row Sisa Lalu, Sisa Fisik, & Terjual
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = sisaLaluInputs[pId] ?: if (sisaLalu > 0) sisaLalu.toString() else "0",
+                                        onValueChange = { sisaLaluInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("Titip Lalu", fontSize = 9.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = appTextFieldColors(),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontSize = 11.sp)
+                                    )
+                                    OutlinedTextField(
+                                        value = sisaFisikInputs[pId] ?: "0",
+                                        onValueChange = { sisaFisikInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("Sisa Fisik", fontSize = 9.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = appTextFieldColors(),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    )
+                                    OutlinedTextField(
+                                        value = hargaInputs[pId] ?: "${currentHarga.toLong()}",
+                                        onValueChange = { hargaInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("Harga/$satuanKecil", fontSize = 9.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = appTextFieldColors(),
+                                        modifier = Modifier.weight(1.1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp)
+                                    )
+                                }
+
+                                // Terjual Subtotal Badge
+                                Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFFF1F5F9), modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Terjual: $pcsLaku $satuanKecil", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = EmeraldSuccess)
+                                        Text("Subtotal: ${SfaViewModel.formatRupiah(subtotalLaku)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                    }
+                                }
+
+                                // Restock / Ganti SKU Section
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = BlueSurface.copy(alpha = 0.4f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BlueBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("Drop Restock Baru / Ganti SKU:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueAccent)
+                                            Text("Total: $totalRestock $satuanKecil", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueAccent)
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // Pack Input dengan Stepper
+                                            Row(modifier = Modifier.weight(1.3f), verticalAlignment = Alignment.CenterVertically) {
+                                                FilledTonalIconButton(
+                                                    onClick = {
+                                                        val next = (restockPack - 1).coerceAtLeast(0)
+                                                        restockPackInputs[pId] = if (next == 0) "" else next.toString()
+                                                    },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                }
+                                                OutlinedTextField(
+                                                    value = restockPackInputs[pId] ?: "",
+                                                    onValueChange = { restockPackInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                                    placeholder = { Text("0", fontSize = 11.sp) },
+                                                    label = { Text("Pack", fontSize = 8.sp) },
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    colors = appTextFieldColors(),
+                                                    modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    singleLine = true,
+                                                    textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                                )
+                                                FilledTonalIconButton(
+                                                    onClick = {
+                                                        val next = restockPack + 1
+                                                        restockPackInputs[pId] = next.toString()
+                                                    },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(12.dp))
+                                                }
+                                            }
+
+                                            // Eceran Pcs Input
+                                            OutlinedTextField(
+                                                value = restockPcsInputs[pId] ?: "",
+                                                onValueChange = { restockPcsInputs[pId] = it.filter { ch -> ch.isDigit() } },
+                                                placeholder = { Text("0", fontSize = 11.sp) },
+                                                label = { Text("Eceran Pcs", fontSize = 8.sp) },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                colors = appTextFieldColors(),
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(6.dp),
+                                                singleLine = true,
+                                                textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center, fontSize = 11.sp)
+                                            )
+                                        }
+
+                                        // Sumber Restock FilterChips
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            FilterChip(
+                                                selected = currentSumber == "FRESH_PABRIK",
+                                                onClick = { sumberRestockInputs[pId] = "FRESH_PABRIK" },
+                                                label = { Text("Fresh Pabrik (${drawer?.stokFreshPabrikPcs ?: 0})", fontSize = 9.sp) },
+                                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate800, selectedLabelColor = Color.White),
+                                                modifier = Modifier.height(26.dp)
+                                            )
+                                            FilterChip(
+                                                selected = currentSumber == "PRIBADI_REPACK",
+                                                onClick = { sumberRestockInputs[pId] = "PRIBADI_REPACK" },
+                                                label = { Text("Pribadi Repack (${drawer?.stokPribadiLayakJualPcs ?: 0})", fontSize = 9.sp) },
+                                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = EmeraldSuccess, selectedLabelColor = Color.White),
+                                                modifier = Modifier.height(26.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Grand Totals & Payment Settlement Card
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Slate50),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate300)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Total Terjual (${activeSKUProducts.size} SKU):", fontSize = 11.sp, color = Slate600)
+                            Text(SfaViewModel.formatRupiah(totalSubtotalLaku), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                        }
+                        if (warung.saldoPiutang > 0) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Saldo Bon Toko Lalu:", fontSize = 11.sp, color = AmberWarning)
+                                Text(SfaViewModel.formatRupiah(warung.saldoPiutang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AmberWarning)
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("TOTAL TAGIHAN:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                            Text(SfaViewModel.formatRupiah(grandTotalTagihan), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                        }
+
+                        // Input Bayar / Uang Diterima
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = bayarInput,
+                                onValueChange = { bayarInput = it.filter { ch -> ch.isDigit() } },
+                                label = { Text("Bayar Diterima (Rp)", fontSize = 10.sp) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = appTextFieldColors(),
+                                modifier = Modifier.weight(1.4f),
+                                shape = RoundedCornerShape(8.dp),
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            )
+                            SuggestionChip(
+                                onClick = { bayarInput = grandTotalTagihan.toLong().toString() },
+                                label = { Text("Lunas Pas", fontSize = 10.sp) },
+                                modifier = Modifier.height(36.dp)
+                            )
+                            SuggestionChip(
+                                onClick = { bayarInput = "0" },
+                                label = { Text("Bon (0)", fontSize = 10.sp) },
+                                modifier = Modifier.height(36.dp)
+                            )
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Sisa Bon Baru: ${SfaViewModel.formatRupiah(sisaPiutangBaru)}", fontSize = 10.sp, color = if (sisaPiutangBaru > 0) AmberWarning else EmeraldSuccess, fontWeight = FontWeight.Bold)
+                            Text("Drop Baru: $totalRestockPcsAll Pcs", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueAccent)
+                        }
+
+                        // Catatan
+                        OutlinedTextField(
+                            value = catatanTransaksi,
+                            onValueChange = { catatanTransaksi = it },
+                            placeholder = { Text(tr("Catatan transaksi...", "Transaction note...", lang), fontSize = 10.sp) },
+                            colors = appTextFieldColors(),
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            singleLine = true
+                        )
+                    }
+                }
+
+                // Action Buttons
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(tr("Batal", "Cancel", lang), fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            val itemsToProcess = products.mapNotNull { p ->
+                                val lalu = getSisaLalu(p)
+                                val fisik = getSisaFisik(p)
+                                val restock = getRestockPcs(p)
+                                if (lalu > 0 || fisik > 0 || restock > 0) {
+                                    val custom = customPrices.find { it.warungId == warung.id && it.productId == p.id }
+                                    val defPrice = custom?.hargaJualPcs ?: p.hargaJualDefault
+                                    val harga = hargaInputs[p.id]?.toDoubleOrNull() ?: defPrice
+                                    val layak = (tarikLayakInputs[p.id]?.toIntOrNull() ?: fisik).coerceIn(0, fisik)
+                                    val bs = (fisik - layak).coerceAtLeast(0)
+                                    BatchTarikSisaItem(
+                                        productId = p.id,
+                                        sisaTitipanLalu = lalu,
+                                        sisaFisik = fisik,
+                                        hargaSatuan = harga,
+                                        restockPcs = restock,
+                                        sumberRestock = getSumberRestock(p.id),
+                                        tarikLayakPcs = layak,
+                                        tarikBsPcs = bs
+                                    )
+                                } else null
+                            }
+
+                            if (itemsToProcess.isNotEmpty()) {
+                                if (onBatchSubmit != null) {
+                                    onBatchSubmit(
+                                        itemsToProcess,
+                                        uangDiterima,
+                                        warung.latitude,
+                                        warung.longitude,
+                                        warung.alamatLengkap,
+                                        catatanTransaksi
+                                    )
+                                } else {
+                                    val first = itemsToProcess.first()
+                                    onSubmit(
+                                        first.productId,
+                                        first.sisaTitipanLalu,
+                                        first.sisaFisik,
+                                        first.hargaSatuan,
+                                        uangDiterima,
+                                        first.restockPcs,
+                                        first.sumberRestock,
+                                        warung.latitude,
+                                        warung.longitude,
+                                        warung.alamatLengkap,
+                                        catatanTransaksi,
+                                        first.tarikLayakPcs,
+                                        first.tarikBsPcs
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1.6f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(tr("Selesai & Struk", "Finish & Receipt", lang), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+// 5. CLOSING SORE & SETORAN SUPPLIER / PRINCIPAL DIALOG (MULTI-LOADING & MULTI-SUPPLIER)
+@Composable
+fun ClosingSoreDialog(
+    loadings: List<DailyLoadingEntity>,
+    products: List<ProductEntity>,
+    pabriks: List<PabrikEntity> = emptyList(),
+    drawers: List<InventoryDrawerEntity> = emptyList(),
+    transactions: List<TransactionEntity>,
+    bsSortirs: List<BsSortirEntity>,
+    onDismiss: () -> Unit,
+    onSubmitBatch: (items: List<com.example.data.repository.ProductClosingInput>, summary: ClosingSummaryData) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val today = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()) }
+    val todayLoadings = remember(loadings, today) { loadings.filter { it.tanggal == today } }
+
+    // Dapatkan daftar produk awal yang dimuat hari ini, ada transaksi hari ini, atau ada stok di laci
+    val initialProductIds = remember(todayLoadings, products, drawers, transactions) {
+        val fromLoadings = todayLoadings.map { it.productId }
+        val fromTransactions = transactions.filter { it.tanggal == today }.map { it.productId }
+        val fromDrawers = drawers.filter { (it.stokFreshPabrikPcs > 0 || it.stokPribadiLayakJualPcs > 0 || it.stokBsBelumSortirPcs > 0) }.map { it.productId }
+        val combined = (fromLoadings + fromTransactions + fromDrawers).distinct()
+        if (combined.isNotEmpty()) combined else products.take(5).map { it.id }
+    }
+
+    val dynamicProductIds = remember { mutableStateListOf<String>().apply { addAll(initialProductIds) } }
+    var showAddSkuDialog by remember { mutableStateOf(false) }
+
+    val sisaDusInputs = remember { mutableStateMapOf<String, String>() }
+    val sisaPcsInputs = remember { mutableStateMapOf<String, String>() }
+
+    // Inisialisasi input state untuk masing-masing produk
+    LaunchedEffect(dynamicProductIds.toList()) {
+        dynamicProductIds.forEach { pId ->
+            if (!sisaDusInputs.containsKey(pId)) {
+                val existingClosingDus = todayLoadings.filter { it.productId == pId }.lastOrNull()?.sisaDusSore ?: 0
+                sisaDusInputs[pId] = if (existingClosingDus > 0) existingClosingDus.toString() else "0"
+            }
+            if (!sisaPcsInputs.containsKey(pId)) {
+                sisaPcsInputs[pId] = "0"
+            }
+        }
+    }
+
+    // Kalkulasi per produk
+    val productSummaries = dynamicProductIds.mapNotNull { pId ->
+        val product = products.find { it.id == pId } ?: return@mapNotNull null
+        val pLoadings = todayLoadings.filter { it.productId == pId }
+        val pabrik = pabriks.find { it.id == product.pabrikId }
+        val pabrikName = pabrik?.namaPabrik ?: "Supplier Utama"
+        val rasio = pLoadings.firstOrNull()?.rasioKonversi ?: product.rasioKonversi
+        val hargaBeliDus = pLoadings.firstOrNull()?.hargaBeliPabrikDus ?: product.hargaBeliPabrik
+
+        val totalMuatDus = if (pLoadings.isNotEmpty()) pLoadings.sumOf { it.jumlahDus } else 0
+        val totalMuatPcs = if (pLoadings.isNotEmpty()) pLoadings.sumOf { it.totalPcs } else (totalMuatDus * rasio)
+
+        val sisaDus = sisaDusInputs[pId]?.toIntOrNull() ?: 0
+        val sisaPcsLepasan = sisaPcsInputs[pId]?.toIntOrNull() ?: 0
+        val sisaTotalPcs = (sisaDus * rasio) + sisaPcsLepasan
+        val pcsTerdistribusi = (totalMuatPcs - sisaTotalPcs).coerceAtLeast(0)
+        val terjualDusEquivalent = if (rasio > 0) pcsTerdistribusi.toDouble() / rasio else 0.0
+        // Barang rolling/repack jalanan tidak dimuat dari pabrik, setoran ke pabrik = Rp 0 (bukan hutang supplier)
+        val tagihanPabrik = if (totalMuatDus > 0) terjualDusEquivalent * hargaBeliDus else 0.0
+
+        ClosingProductSummary(
+            productId = pId,
+            productName = product.nama,
+            pabrikId = product.pabrikId ?: "",
+            pabrikName = pabrikName,
+            satuanBesar = product.satuanBesar.ifBlank { "Pack" },
+            rasioKonversi = rasio,
+            hargaBeliPabrikDus = hargaBeliDus,
+            totalMuatDus = totalMuatDus,
+            totalMuatPcs = totalMuatPcs,
+            sisaDusSore = sisaDus,
+            sisaPcsLepasanSore = sisaPcsLepasan,
+            sisaTotalPcsSore = sisaTotalPcs,
+            pcsTerdistribusi = pcsTerdistribusi,
+            terjualDusEquivalent = terjualDusEquivalent,
+            tagihanPabrik = tagihanPabrik
+        )
+    }
+
+    // Kelompokkan per Supplier / Pabrik
+    val supplierSummaries = productSummaries.groupBy { it.pabrikName }.map { (pabrikName, items) ->
+        ClosingSupplierSummary(
+            pabrikId = items.firstOrNull()?.pabrikId ?: "",
+            pabrikName = pabrikName,
+            products = items,
+            totalMuatDus = items.sumOf { it.totalMuatDus },
+            sisaDusSore = items.sumOf { it.sisaDusSore },
+            sisaPcsLepasanSore = items.sumOf { it.sisaPcsLepasanSore },
+            sisaTotalPcsSore = items.sumOf { it.sisaTotalPcsSore },
+            pcsTerdistribusi = items.sumOf { it.pcsTerdistribusi },
+            totalTerjualDusEquivalent = items.sumOf { it.terjualDusEquivalent },
+            totalTagihanPabrik = items.sumOf { it.tagihanPabrik }
+        )
+    }
+
+    val totalMuatDusOverall = supplierSummaries.sumOf { it.totalMuatDus }
+    val totalTagihanSemuaSupplier = supplierSummaries.sumOf { it.totalTagihanPabrik }
+
+    // Data kas outlet & sortir BS hari ini
+    val todayTransactions = transactions.filter { it.tanggal == today && it.warungId != "CLOSING_SALES" && it.jenis != "CLOSING_HARIAN" }
+    val totalKasWarungHariIni = todayTransactions.sumOf { it.uangDiterima }
+    val totalLakuPcsToday = todayTransactions.sumOf { it.pcsLaku }
+    val totalTitipBaruPcsToday = todayTransactions.filter { it.jenis == "TITIP_BARU" }.sumOf { it.restockBaruPcs }
+    val totalSortirTodayPcs = bsSortirs.filter {
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(it.timestamp)) == today
+    }.sumOf { it.totalBsAwalPcs }
+
+    val selisihKas = totalKasWarungHariIni - totalTagihanSemuaSupplier
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.96f)
+                    .padding(vertical = 4.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                // Header
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(BlueAccent.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(imageVector = Icons.Default.Assessment, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(20.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Closing Sore Multi-Supplier",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate900
+                        )
+                        Text(
+                            text = "Rekonsiliasi Fisik Mobil & Tagihan Principal ($today)",
+                            fontSize = 11.sp,
+                            color = Slate600
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Scrollable Content
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Notice Konsinyasi
+                    Card(
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = RoseSurface),
+                        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(RoseDanger.copy(alpha = 0.3f)))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = RoseDanger, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "Aturan Konsinyasi: Barang Retur ditarik TIDAK mengurangi tagihan supplier. Salesman wajib setor barang fresh yang keluar/terdistribusi.",
+                                fontSize = 11.sp,
+                                color = RoseText,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    // Loop per Supplier
+                    supplierSummaries.forEach { supplier ->
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Slate100),
+                            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate300))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                // Supplier Title Header
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Icon(imageVector = Icons.Default.Business, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(16.dp))
+                                        Text(
+                                            text = supplier.pabrikName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = Slate900
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = BlueAccent.copy(alpha = 0.12f)
+                                    ) {
+                                        Text(
+                                            text = "${supplier.products.size} SKU",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BlueAccent,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                HorizontalDivider(color = Slate300)
+
+                                // List of Products under this supplier
+                                supplier.products.forEach { prod ->
+                                    Card(
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                                        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate200))
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = prod.productName,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp,
+                                                        color = Slate900
+                                                    )
+                                                    Text(
+                                                        text = "Rasio: 1 ${prod.satuanBesar} = ${prod.rasioKonversi} Pcs • Modal: ${SfaViewModel.formatRupiah(prod.hargaBeliPabrikDus)}/${prod.satuanBesar}",
+                                                        fontSize = 10.sp,
+                                                        color = Slate500
+                                                    )
+                                                }
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = if (prod.totalMuatDus > 0) Slate200 else Color(0xFFDCFCE7)
+                                                ) {
+                                                    Text(
+                                                        text = if (prod.totalMuatDus > 0) "Muat: ${prod.totalMuatDus} ${prod.satuanBesar} (${prod.totalMuatPcs} Pcs)" else "🔄 Rolling / Repack Jalanan",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (prod.totalMuatDus > 0) Slate800 else EmeraldSuccess,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = sisaDusInputs[prod.productId] ?: "0",
+                                                    onValueChange = { sisaDusInputs[prod.productId] = it },
+                                                    label = { Text(tr("Sisa ${prod.satuanBesar} Utuh", "Remaining Intact ${prod.satuanBesar}", lang), fontSize = 11.sp) },
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    colors = appTextFieldColors(),
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    singleLine = true
+                                                )
+                                                OutlinedTextField(
+                                                    value = sisaPcsInputs[prod.productId] ?: "0",
+                                                    onValueChange = { sisaPcsInputs[prod.productId] = it },
+                                                    label = { Text(tr("Sisa Pcs Lepasan", "Remaining Loose Pcs", lang), fontSize = 11.sp) },
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                    colors = appTextFieldColors(),
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    singleLine = true
+                                                )
+                                            }
+
+                                            // Mini Result Chip
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0xFFF1F5F9),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = if (prod.totalMuatDus > 0) {
+                                                            "Terjual: ${prod.pcsTerdistribusi} Pcs (~${String.format(java.util.Locale.US, "%.1f", prod.terjualDusEquivalent)} ${prod.satuanBesar})"
+                                                        } else {
+                                                            "Sisa Fisik: ${prod.sisaTotalPcsSore} Pcs (Stok Rolling)"
+                                                        },
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = EmeraldSuccess
+                                                    )
+                                                    Text(
+                                                        text = if (prod.totalMuatDus > 0) {
+                                                            "Setoran: ${SfaViewModel.formatRupiah(prod.tagihanPabrik)}"
+                                                        } else {
+                                                            "Setoran: Rp 0 (Bukan Pabrik)"
+                                                        },
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Slate900
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Subtotal Supplier
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Subtotal Setoran ${supplier.pabrikName}:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Slate700
+                                    )
+                                    Text(
+                                        text = SfaViewModel.formatRupiah(supplier.totalTagihanPabrik),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Slate900
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Tombol Tambah Produk Rolling / Repack Lainnya
+                    OutlinedButton(
+                        onClick = { showAddSkuDialog = true },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BlueBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = BlueSurface)
+                    ) {
+                        Icon(Icons.Default.AddCircleOutline, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "+ Tambah Produk Rolling / Repack Lain ke Closing",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BlueAccent
+                        )
+                    }
+
+                    // Rekap Total Kasir Card
+                    Card(shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Slate900)) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "REKAPITULASI KEUANGAN HARIAN",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(tr("Total Muat Seluruh SKU:", "Total Load All SKUs:", lang), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                Text("$totalMuatDusOverall Pack", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(tr("Penjualan Outlet (Laku):", "Outlet Sales (Sold):", lang), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                Text("$totalLakuPcsToday Pcs", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            if (totalTitipBaruPcsToday > 0) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(tr("Titip Baru di Warung:", "New Consignment at Store:", lang), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                    Text(tr("$totalTitipBaruPcsToday Pcs (Modal Tertanam)", "$totalTitipBaruPcsToday Pcs (Invested Capital)", lang), color = BlueAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(tr("TOTAL SETORAN SUPPLIER:", "TOTAL SUPPLIER DEPOSIT:", lang), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text(SfaViewModel.formatRupiah(totalTagihanSemuaSupplier), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(tr("Total Kas Diterima dari Outlet:", "Total Cash Received from Outlets:", lang), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                Text(SfaViewModel.formatRupiah(totalKasWarungHariIni), color = AmberWarning, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(if (selisihKas >= 0) "Surplus Kasir:" else "Selisih Kas (Modal Tertanam/Bon):", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                                Text(
+                                    text = if (selisihKas >= 0) "+${SfaViewModel.formatRupiah(selisihKas)}" else "-${SfaViewModel.formatRupiah(kotlin.math.abs(selisihKas))}",
+                                    color = if (selisihKas >= 0) EmeraldSuccess else RoseDanger,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Action Buttons
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(tr("Batal", "Cancel", lang))
+                    }
+                    Button(
+                        onClick = {
+                            val items = dynamicProductIds.map { pId ->
+                                val dus = sisaDusInputs[pId]?.toIntOrNull() ?: 0
+                                val pcs = sisaPcsInputs[pId]?.toIntOrNull() ?: 0
+                                com.example.data.repository.ProductClosingInput(
+                                    productId = pId,
+                                    sisaDusSore = dus,
+                                    sisaPcsLepasanSore = pcs
+                                )
+                            }
+                            val summary = ClosingSummaryData(
+                                tanggal = today,
+                                waktuClosing = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
+                                totalMuatDus = totalMuatDusOverall,
+                                totalTagihanSemuaSupplier = totalTagihanSemuaSupplier,
+                                totalKasWarungHariIni = totalKasWarungHariIni,
+                                selisihKas = selisihKas,
+                                totalTxCount = todayTransactions.size,
+                                totalSortirTodayPcs = totalSortirTodayPcs,
+                                supplierSummaries = supplierSummaries,
+                                productSummaries = productSummaries,
+                                productName = if (productSummaries.size == 1) productSummaries.first().productName else "Multi-SKU (${productSummaries.size} Produk)",
+                                sisaDusSore = supplierSummaries.sumOf { it.sisaDusSore },
+                                sisaPcsLepasan = supplierSummaries.sumOf { it.sisaPcsLepasanSore },
+                                terjualDus = supplierSummaries.sumOf { it.totalTerjualDusEquivalent }.toInt(),
+                                tagihanPabrikFinal = totalTagihanSemuaSupplier
+                            )
+                            onSubmitBatch(items, summary)
+                        },
+                        modifier = Modifier.weight(1.5f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) {
+                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(tr("Simpan & Cetak Struk", "Save & Print Receipt", lang))
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    if (showAddSkuDialog) {
+        val remainingProducts = products.filter { it.id !in dynamicProductIds }
+        AlertDialog(
+            onDismissRequest = { showAddSkuDialog = false },
+            title = {
+                Text(
+                    text = "Pilih Produk Rolling / Repack di Jalan",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Slate900
+                )
+            },
+            text = {
+                if (remainingProducts.isEmpty()) {
+                    Text("Semua produk dalam katalog sudah masuk dalam daftar closing sore.", fontSize = 12.sp, color = Slate600)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(remainingProducts) { p ->
+                            Card(
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Slate100),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        dynamicProductIds.add(p.id)
+                                        sisaDusInputs[p.id] = "0"
+                                        sisaPcsInputs[p.id] = "0"
+                                        showAddSkuDialog = false
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(p.nama, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Slate900)
+                                        Text("Kategori: ${p.kategori} • 1 ${p.satuanBesar} = ${p.rasioKonversi} ${p.satuanKecil}", fontSize = 10.sp, color = Slate500)
+                                    }
+                                    Icon(Icons.Default.Add, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAddSkuDialog = false }) {
+                    Text("Tutup", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+}
+
+// 6. BLUETOOTH THERMAL RECEIPT DIALOG (58mm - SINGLE & MULTI-SKU)
+@Composable
+fun ReceiptDialog(
+    transaction: TransactionEntity,
+    warung: WarungEntity?,
+    product: ProductEntity?,
+    userProfile: UserProfileEntity? = null,
+    onDismiss: () -> Unit
+) {
+    ReceiptDialog(
+        transactions = listOf(transaction),
+        warung = warung,
+        products = listOfNotNull(product),
+        userProfile = userProfile,
+        onDismiss = onDismiss
+    )
+}
+
+@Composable
+fun ReceiptDialog(
+    transactions: List<TransactionEntity>,
+    warung: WarungEntity?,
+    products: List<ProductEntity>,
+    userProfile: UserProfileEntity? = null,
+    onDismiss: () -> Unit
+) {
+    val lang = LocalAppLanguage.current
+    if (transactions.isEmpty()) return
+
+    val firstTx = transactions.first()
+    val isTitip = transactions.all { it.jenis == "TITIP_BARU" }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate400)),
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = userProfile?.namaDistributor?.ifBlank { "DISTRIBUTOR & SFA DISTRIBUSI" } ?: "DISTRIBUTOR & SFA DISTRIBUSI",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center
+                )
+                if (!userProfile?.alamatDepo.isNullOrBlank()) {
+                    Text(
+                        text = userProfile!!.alamatDepo,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center,
+                        color = Slate600
+                    )
+                }
+                Text(
+                    text = if (isTitip) "BUKTI DROP KONSINYASI OUTLET" else "BUKTI TRANSAKSI & RETUR OUTLET",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "================================",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Slate500
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(tr("No. Faktur:", "Invoice No:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    Text(
+                        if (transactions.size > 1) "${firstTx.id.take(8).uppercase()}+${transactions.size}" else firstTx.id.take(12).uppercase(),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(tr("Tipe Transaksi:", "Transaction Type:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    Text(
+                        if (isTitip) "DROP TITIP BARU" else "TARIK SISA & SETTLE",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(tr("Salesman:", "Salesman:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    Text(
+                        "${userProfile?.namaSalesman?.ifBlank { "Sales" } ?: "Sales"} ${if (!userProfile?.platNomorMobil.isNullOrBlank()) "(${userProfile!!.platNomorMobil})" else ""}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(tr("Outlet:", "Outlet:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    Text(warung?.namaWarung ?: "Outlet", fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(tr("Waktu:", "Time:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    Text(SfaViewModel.formatDate(firstTx.timestamp), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                }
+                if (firstTx.gpsLat != 0.0 || firstTx.gpsLng != 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("GPS:", "GPS:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        Text(String.format(java.util.Locale.US, "%.5f, %.5f", firstTx.gpsLat, firstTx.gpsLng), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    }
+                }
+
+                Text(
+                    text = "--------------------------------",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Slate500
+                )
+
+                // List items
+                transactions.forEachIndexed { index, tx ->
+                    val prod = products.find { it.id == tx.productId }
+                    val satuanKecil = prod?.satuanKecil ?: "Pcs"
+                    val qtyTitipBaru = if (tx.restockBaruPcs > 0) tx.restockBaruPcs else tx.totalTitipanAktifPcs
+
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                text = "${index + 1}. ${prod?.nama ?: tx.productId}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (isTitip) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("   Dititip: $qtyTitipBaru $satuanKecil @ ${SfaViewModel.formatRupiah(tx.hargaSatuan)}", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                                Text(SfaViewModel.formatRupiah(qtyTitipBaru * tx.hargaSatuan), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("   Sumber: ${if (tx.sumberStok == "FRESH_PABRIK") "Fresh" else "Repack"} | Aktif: ${tx.totalTitipanAktifPcs} $satuanKecil", fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = Slate600)
+                            }
+                        } else {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("   Lalu: ${tx.sisaTitipanLaluPcs} | Fisik: ${tx.sisaFisikPcs} | Laku: ${tx.pcsLaku} $satuanKecil", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                                Text(SfaViewModel.formatRupiah(tx.subtotalLaku), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("   Retur BS: ${tx.bsDitarikPcs} | Drop Baru: ${tx.restockBaruPcs} $satuanKecil", fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = Slate600)
+                                Text("Aktif: ${tx.totalTitipanAktifPcs} $satuanKecil", fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "================================",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Slate500
+                )
+
+                if (isTitip) {
+                    val totalPcsAll = transactions.sumOf { if (it.restockBaruPcs > 0) it.restockBaruPcs else it.totalTitipanAktifPcs }
+                    val totalNilaiAll = transactions.sumOf { (if (it.restockBaruPcs > 0) it.restockBaruPcs else it.totalTitipanAktifPcs) * it.hargaSatuan }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("TOTAL BARANG DROP:", "TOTAL DROP ITEMS:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("${transactions.size} SKU ($totalPcsAll Pcs)", fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("TOTAL ESTIMASI NILAI:", "TOTAL ESTIMATED VALUE:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(SfaViewModel.formatRupiah(totalNilaiAll), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    if (firstTx.saldoPiutangBaru > 0) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(tr("Saldo Bon Outlet:", "Outlet Credit Balance:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            Text(SfaViewModel.formatRupiah(firstTx.saldoPiutangBaru), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        }
+                    }
+                } else {
+                    val totalSubtotalLaku = transactions.sumOf { it.subtotalLaku }
+                    val saldoPiutangLama = firstTx.saldoPiutangLama
+                    val grandTotal = totalSubtotalLaku + saldoPiutangLama
+                    val uangDiterima = firstTx.uangDiterima
+                    val saldoPiutangBaru = (grandTotal - uangDiterima).coerceAtLeast(0.0)
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("TOTAL TERJUAL:", "TOTAL SOLD:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        Text(SfaViewModel.formatRupiah(totalSubtotalLaku), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    }
+                    if (saldoPiutangLama > 0) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(tr("Saldo Bon Lama:", "Previous Credit Balance:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            Text(SfaViewModel.formatRupiah(saldoPiutangLama), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("TOTAL TAGIHAN:", "TOTAL DUE:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(SfaViewModel.formatRupiah(grandTotal), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("BAYAR DITERIMA:", "PAYMENT RECEIVED:", lang), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(SfaViewModel.formatRupiah(uangDiterima), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(tr("SISA BON BARU:", "NEW CREDIT BALANCE:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        Text(SfaViewModel.formatRupiah(saldoPiutangBaru), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                    }
+                }
+
+                val notes = transactions.map { it.catatan }.filter { it.isNotBlank() }.distinct().joinToString("; ")
+                if (notes.isNotBlank()) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Catatan: $notes", fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = Slate600)
+                    }
+                }
+
+                Text(
+                    text = "================================",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Slate500
+                )
+                Text(
+                    text = "Terima Kasih Atas Kerjasamanya\nBarang titipan tanggung jawab bersama",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    textAlign = TextAlign.Center,
+                    color = Slate600
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(tr("Tutup", "Close", lang))
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) {
+                        Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(tr("Cetak BT", "Print BT", lang))
+                    }
+                }
+            }
+        }
+    }
+}
+// 6B. THERMAL RECEIPT CLOSING HARIAN & SETORAN MULTI-SUPPLIER (58mm)
+@Composable
+fun ClosingReceiptDialog(
+    data: ClosingSummaryData,
+    userProfile: UserProfileEntity? = null,
+    onDismiss: () -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val context = androidx.compose.ui.platform.LocalContext.current
+    val suppliers = data.supplierSummaries
+
+    // 0 = Rekap Lengkap Gabungan, 1..N = Supplier N
+    var selectedSupplierIndex by remember { mutableStateOf(0) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Slate400)),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.92f)
+                .padding(vertical = 12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Header Dialog
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.ReceiptLong, contentDescription = null, tint = Slate900)
+                        Text(
+                            text = "Struk Closing Harian 58mm",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Slate900
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500)
+                    }
+                }
+
+                // If multiple suppliers, provide separated tabs!
+                if (suppliers.size > 1) {
+                    ScrollableTabRow(
+                        selectedTabIndex = selectedSupplierIndex,
+                        edgePadding = 0.dp,
+                        containerColor = Slate100,
+                        contentColor = Slate900,
+                        indicator = { tabPositions ->
+                            if (selectedSupplierIndex < tabPositions.size) {
+                                TabRowDefaults.SecondaryIndicator(
+                                    Modifier.tabIndicatorOffset(tabPositions[selectedSupplierIndex]),
+                                    color = Slate900,
+                                    height = 3.dp
+                                )
+                            }
+                        },
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                    ) {
+                        Tab(
+                            selected = selectedSupplierIndex == 0,
+                            onClick = { selectedSupplierIndex = 0 },
+                            selectedContentColor = Slate900,
+                            unselectedContentColor = Slate600,
+                            text = { Text(tr("⚡ REKAP GABUNGAN", "⚡ COMBINED SUMMARY", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (selectedSupplierIndex == 0) Slate900 else Slate600) }
+                        )
+                        suppliers.forEachIndexed { idx, supp ->
+                            val isSuppSelected = selectedSupplierIndex == idx + 1
+                            Tab(
+                                selected = isSuppSelected,
+                                onClick = { selectedSupplierIndex = idx + 1 },
+                                selectedContentColor = Slate900,
+                                unselectedContentColor = Slate600,
+                                text = { Text("🏭 ${supp.pabrikName.take(16)}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isSuppSelected) Slate900 else Slate600) }
+                            )
+                        }
+                    }
+                }
+
+                // Monospace Thermal Receipt 58mm Viewport
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(Color(0xFFFBFBFB), RoundedCornerShape(8.dp))
+                        .border(1.dp, Slate300, RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (selectedSupplierIndex == 0 || suppliers.size <= 1) {
+                        CombinedClosingReceiptContent(data = data, userProfile = userProfile)
+                    } else {
+                        val activeSupplier = suppliers.getOrNull(selectedSupplierIndex - 1)
+                        if (activeSupplier != null) {
+                            SingleSupplierReceiptContent(
+                                supplier = activeSupplier,
+                                closingDate = data.tanggal,
+                                closingTime = data.waktuClosing,
+                                userProfile = userProfile
+                            )
+                        }
+                    }
+                }
+
+                // Footer Actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(tr("Tutup", "Close", lang), fontSize = 12.sp)
+                    }
+                    Button(
+                        onClick = {
+                            val msg = if (selectedSupplierIndex == 0 || suppliers.size <= 1) {
+                                "Mencetak Rekap Closing Gabungan ke printer Bluetooth thermal 58mm..."
+                            } else {
+                                val suppName = suppliers.getOrNull(selectedSupplierIndex - 1)?.pabrikName ?: "Supplier"
+                                "Mencetak Struk Khusus Supplier $suppName ke printer thermal 58mm..."
+                            }
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1.4f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (selectedSupplierIndex == 0 || suppliers.size <= 1) "Cetak Rekap" else "Cetak Struk Supplier",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CombinedClosingReceiptContent(
+    data: ClosingSummaryData,
+    userProfile: UserProfileEntity?
+) {
+    val lang = LocalAppLanguage.current
+
+Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = userProfile?.namaDistributor?.ifBlank { "DISTRIBUTOR & SFA DISTRIBUSI" } ?: "DISTRIBUTOR & SFA DISTRIBUSI",
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.Center
+        )
+        if (!userProfile?.alamatDepo.isNullOrBlank()) {
+            Text(
+                text = userProfile?.alamatDepo.orEmpty(),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+                color = Slate600
+            )
+        }
+        Text(
+            text = "REKAPITULASI CLOSING GABUNGAN",
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = "================================",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Tanggal Closing:", "Closing Date:", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(data.tanggal, fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Waktu Cetak    :", "Print Time     :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(data.waktuClosing, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Salesman / User:", "Salesman / User:", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(userProfile?.namaSalesman?.ifBlank { "Sales SFA" } ?: "Sales SFA", fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Text(
+            text = "--------------------------------",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        // Rincian per Supplier & SKU
+        data.supplierSummaries.forEach { supp ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "🏭 [${supp.pabrikName.uppercase()}]",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BlueText
+                )
+            }
+            supp.products.forEach { prod ->
+                Text(
+                    text = "• ${prod.productName}",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("  Muat/Sisa : ${prod.totalMuatDus}${prod.satuanBesar.take(1)} / ${prod.sisaDusSore}${prod.satuanBesar.take(1)}+${prod.sisaPcsLepasanSore}P", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                    Text("Laku: ${prod.pcsTerdistribusi}P", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("  Setoran   : ${String.format(java.util.Locale.US, "%.1f", prod.terjualDusEquivalent)} ${prod.satuanBesar}", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                    Text(SfaViewModel.formatRupiah(prod.tagihanPabrik), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("  SUBTOTAL ${supp.pabrikName.take(10)}:", fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(SfaViewModel.formatRupiah(supp.totalTagihanPabrik), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                text = " - - - - - - - - - - - - - - - -",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                color = Slate400
+            )
+        }
+
+        // Summary Total
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("TOTAL SETORAN SEMUA SUPPLIER:", "TOTAL DEPOSIT ALL SUPPLIERS:", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text(SfaViewModel.formatRupiah(data.totalTagihanSemuaSupplier), fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("KAS OUTLET DITERIMA         :", "OUTLET CASH RECEIVED        :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text(SfaViewModel.formatRupiah(data.totalKasWarungHariIni), fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("STATUS KASIR (SELISIH)      :", "CASHIER STATUS (VARIANCE)   :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(
+                if (data.selisihKas >= 0) "Surplus +${SfaViewModel.formatRupiah(data.selisihKas)}" else "Defisit -${SfaViewModel.formatRupiah(kotlin.math.abs(data.selisihKas))}",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (data.selisihKas >= 0) EmeraldSuccess else RoseDanger
+            )
+        }
+
+        Text(
+            text = "--------------------------------",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Kunjungan Toko :", "Store Visits   :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(tr("${data.totalTxCount} Outlet", "${data.totalTxCount} Outlets", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        }
+
+        Text(
+            text = "================================",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(tr("Salesman", "Salesman", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("(..........)", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(tr("Kasir / Finance", "Cashier / Finance", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("(..........)", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SingleSupplierReceiptContent(
+    supplier: ClosingSupplierSummary,
+    closingDate: String,
+    closingTime: String,
+    userProfile: UserProfileEntity?
+) {
+    val lang = LocalAppLanguage.current
+
+Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = userProfile?.namaDistributor?.ifBlank { "DISTRIBUTOR & SFA DISTRIBUSI" } ?: "DISTRIBUTOR & SFA DISTRIBUSI",
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "REKAP SETORAN PRINCIPAL",
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = "SUPPLIER: ${supplier.pabrikName.uppercase()}",
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            color = BlueText
+        )
+        Text(
+            text = "================================",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Tanggal Closing:", "Closing Date:", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(closingDate, fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Waktu Cetak    :", "Print Time     :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(closingTime, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("Salesman       :", "Salesman       :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(userProfile?.namaSalesman?.ifBlank { "Sales SFA" } ?: "Sales SFA", fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Text(
+            text = "--------------------------------",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        supplier.products.forEach { prod ->
+            Text(
+                text = prod.productName,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Rasio Konversi :", "• Conversion Ratio :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Text(tr("1 ${prod.satuanBesar} = ${prod.rasioKonversi} Pcs", "1 ${prod.satuanBesar} = ${prod.rasioKonversi} Pcs", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Total Muat     :", "• Total Load       :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Text(tr("${prod.totalMuatDus} ${prod.satuanBesar} (${prod.totalMuatPcs} Pcs)", "${prod.totalMuatDus} ${prod.satuanBesar} (${prod.totalMuatPcs} Pcs)", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Sisa Fisik Sore:", "• Evening Stock Left:", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Text("${prod.sisaDusSore} ${prod.satuanBesar} + ${prod.sisaPcsLepasanSore} Pcs", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Terdistribusi  :", "• Distributed      :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Text("${prod.pcsTerdistribusi} Pcs (~${String.format(java.util.Locale.US, "%.1f", prod.terjualDusEquivalent)} ${prod.satuanBesar})", fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Harga Beli/${prod.satuanBesar} :", "• Buy Price/${prod.satuanBesar} :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Text(SfaViewModel.formatRupiah(prod.hargaBeliPabrikDus), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tr("• Tagihan SKU    :", "• SKU Invoice      :", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(SfaViewModel.formatRupiah(prod.tagihanPabrik), fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                text = " - - - - - - - - - - - - - - - -",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                color = Slate400
+            )
+        }
+
+        Text(
+            text = "--------------------------------",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tr("TOTAL WAJIB SETOR:", "TOTAL DEPOSIT REQUIRED:", lang), fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(SfaViewModel.formatRupiah(supplier.totalTagihanPabrik), fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Text(
+            text = "================================",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Slate500
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(tr("Salesman", "Salesman", lang), fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("(..........)", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Kasir / ${supplier.pabrikName.take(12)}", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("(..........)", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            }
+        }
+    }
+}
+
+// 7. WRITE OFF DIALOG
+@Composable
+fun WriteOffDialog(
+    warung: WarungEntity,
+    onDismiss: () -> Unit,
+    onSubmit: (harga: Double, alasan: String) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var alasan by remember { mutableStateOf("Warung Bangkrut / Tutup Permanen") }
+    val piutang = warung.saldoPiutang
+    val stok = warung.stokTitipanPcs
+    val totalKerugian = piutang + (stok * 1600.0)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Write-Off / Hapus Buku Warung",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = RoseDanger
+                )
+                Text(
+                    text = "Warung: ${warung.namaWarung}",
+                    fontSize = 12.sp,
+                    color = Slate500
+                )
+
+                Card(shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = RoseSurface)) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(tr("Piutang Bon Hangus: ${SfaViewModel.formatRupiah(piutang)}", "Written-Off Credit: ${SfaViewModel.formatRupiah(piutang)}", lang), color = RoseDanger, fontSize = 11.sp)
+                        Text(tr("Stok Titipan Hangus: $stok Pcs (${SfaViewModel.formatRupiah(stok * 1600.0)})", "Written-Off Stock: $stok Pcs (${SfaViewModel.formatRupiah(stok * 1600.0)})", lang), color = RoseDanger, fontSize = 11.sp)
+                        HorizontalDivider(color = RoseBorder)
+                        Text(tr("Total Kerugian Write-Off: ${SfaViewModel.formatRupiah(totalKerugian)}", "Total Write-Off Loss: ${SfaViewModel.formatRupiah(totalKerugian)}", lang), color = RoseText, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = alasan,
+                    onValueChange = { alasan = it },
+                    label = { Text(tr("Alasan Write-Off", "Write-Off Reason", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(tr("Batal", "Cancel", lang))
+                    }
+                    Button(
+                        onClick = { onSubmit(1600.0, alasan) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = RoseDanger)
+                    ) {
+                        Text(tr("Hapus Buku", "Write-Off", lang))
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+// ADD/EDIT PRODUCT DIALOG
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddEditProductDialog(
+    product: ProductEntity?,
+    pabriks: List<PabrikEntity> = emptyList(),
+    onDismiss: () -> Unit,
+    onSave: (ProductEntity) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var nama by remember { mutableStateOf(product?.nama ?: "") }
+    var kategori by remember { mutableStateOf(product?.kategori ?: "Makanan & Roti") }
+    var selectedPabrikId by remember { mutableStateOf(product?.pabrikId) }
+    var satuanBesar by remember { mutableStateOf(product?.satuanBesar ?: "Pack") }
+    var satuanKecil by remember { mutableStateOf(product?.satuanKecil ?: "Pcs") }
+    var rasioKonversi by remember { mutableStateOf("${product?.rasioKonversi ?: 10}") }
+    var hargaBeli by remember { mutableStateOf("${product?.hargaBeliPabrik ?: 11000.0}") }
+    var hargaJual by remember { mutableStateOf("${product?.hargaJualDefault ?: 1600.0}") }
+
+    val rasioInt = rasioKonversi.toIntOrNull() ?: 1
+    val hargaBeliNum = hargaBeli.toDoubleOrNull() ?: 0.0
+    val modalPerUnit = if (rasioInt > 0 && hargaBeliNum > 0) hargaBeliNum / rasioInt else 0.0
+
+    val unitBesarPresets = listOf("Pack", "Dus", "Slop", "Bal", "Renteng", "Box", "Krat", "Lusin", "Karton")
+    val unitKecilPresets = listOf("Pcs", "Sachet", "Bungkus", "Butir", "Botol", "Lembar", "Porsi")
+
+    val selectedPabrik = pabriks.find { it.id == selectedPabrikId }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = if (product == null) "Tambah Master Produk" else "Edit Master Produk",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate900
+                        )
+                        Text(
+                            text = "Konfigurasi Satuan, Supplier & Saran Harga",
+                            fontSize = 11.sp,
+                            color = Slate500
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                OutlinedTextField(
+                    value = nama,
+                    onValueChange = { nama = it },
+                    label = { Text(tr("Nama Barang / SKU", "Item Name / SKU", lang)) },
+                    placeholder = { Text(tr("Contoh: Roti Manis Coklat", "Example: Chocolate Sweet Bread", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                OutlinedTextField(
+                    value = kategori,
+                    onValueChange = { kategori = it },
+                    label = { Text(tr("Kategori Produk", "Product Category", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                // Supplier / Pabrik Asal Selection
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Supplier / Pabrik Asal:",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Slate600
+                    )
+                    
+                    if (pabriks.isEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Slate100,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Belum ada master supplier/pabrik terdaftar. Tambahkan supplier di tab 'Supplier & Pabrik' jika ingin mengaitkan produk.",
+                                fontSize = 10.sp,
+                                color = Slate500,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            FilterChip(
+                                selected = selectedPabrikId == null,
+                                onClick = { selectedPabrikId = null },
+                                label = { Text(tr("Tanpa Supplier", "No Supplier", lang), fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Slate900,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = Slate100,
+                                    labelColor = Slate700
+                                ),
+                                border = null
+                            )
+                            pabriks.forEach { p ->
+                                val isSelected = selectedPabrikId == p.id
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { selectedPabrikId = p.id },
+                                    label = { Text(p.namaPabrik, fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Slate900,
+                                        selectedLabelColor = Color.White,
+                                        containerColor = Slate100,
+                                        labelColor = Slate700
+                                    ),
+                                    border = null
+                                )
+                            }
+                        }
+
+                        if (selectedPabrik != null) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = BlueSurface,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BlueBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(Icons.Default.PrecisionManufacturing, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(12.dp))
+                                        Text(
+                                            text = "Supplier: ${selectedPabrik.namaPabrik}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BlueAccent
+                                        )
+                                    }
+                                    if (selectedPabrik.kebijakanRetur.isNotBlank()) {
+                                        Text(
+                                            text = "Kebijakan Retur: ${selectedPabrik.kebijakanRetur}",
+                                            fontSize = 10.sp,
+                                            color = Slate600
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Satuan Besar & Preset Chips
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(tr("Satuan Besar (Grosir/Pabrik):", "Large Unit (Wholesale/Factory):", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate600)
+                    OutlinedTextField(
+                        value = satuanBesar,
+                        onValueChange = { satuanBesar = it },
+                        placeholder = { Text(tr("Dus / Pack / Slop...", "Box / Pack / Carton...", lang)) },
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        unitBesarPresets.forEach { preset ->
+                            SuggestionChip(
+                                onClick = { satuanBesar = preset },
+                                label = { Text(preset, fontSize = 10.sp) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = if (satuanBesar.equals(preset, ignoreCase = true)) Slate900 else Slate100,
+                                    labelColor = if (satuanBesar.equals(preset, ignoreCase = true)) Color.White else Slate700
+                                ),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Satuan Kecil & Preset Chips
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(tr("Satuan Kecil (Eceran/Warung):", "Small Unit (Retail/Store):", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate600)
+                    OutlinedTextField(
+                        value = satuanKecil,
+                        onValueChange = { satuanKecil = it },
+                        placeholder = { Text(tr("Pcs / Sachet / Bungkus...", "Pcs / Sachet / Pouch...", lang)) },
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        unitKecilPresets.forEach { preset ->
+                            SuggestionChip(
+                                onClick = { satuanKecil = preset },
+                                label = { Text(preset, fontSize = 10.sp) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = if (satuanKecil.equals(preset, ignoreCase = true)) Slate900 else Slate100,
+                                    labelColor = if (satuanKecil.equals(preset, ignoreCase = true)) Color.White else Slate700
+                                ),
+                                border = null,
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Rasio Konversi
+                OutlinedTextField(
+                    value = rasioKonversi,
+                    onValueChange = { rasioKonversi = it.filter { ch -> ch.isDigit() } },
+                    label = { Text(tr("Isi per 1 $satuanBesar ($satuanKecil)", "Quantity per 1 $satuanBesar ($satuanKecil)", lang)) },
+                    placeholder = { Text("10") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                // Harga Beli Pabrik
+                OutlinedTextField(
+                    value = hargaBeli,
+                    onValueChange = { hargaBeli = it },
+                    label = { Text(tr("Harga Beli Pabrik / $satuanBesar (Rp)", "Factory Buy Price / $satuanBesar (Rp)", lang)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                // Modal calculated info
+                if (modalPerUnit > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Slate100,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                tr("Modal Pokok / $satuanKecil:", "Base Cost / $satuanKecil:", lang),
+                                fontSize = 11.sp,
+                                color = Slate600,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                SfaViewModel.formatRupiah(modalPerUnit),
+                                fontSize = 12.sp,
+                                color = Slate900,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Harga Jual Default + Auto Suggestion Margins
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedTextField(
+                        value = hargaJual,
+                        onValueChange = { hargaJual = it },
+                        label = { Text(tr("Harga Jual Eceran / $satuanKecil (Rp)", "Retail Price / $satuanKecil (Rp)", lang)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    if (modalPerUnit > 0) {
+                        Text(
+                            tr("Saran Cepat Harga Jual (+Margin):", "Quick Selling Price Suggestion (+Margin):", lang),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate600
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(10, 15, 20, 25, 30, 40, 50).forEach { marginPct ->
+                                val suggested = (modalPerUnit * (1.0 + marginPct / 100.0)).toLong()
+                                // Round to nearest 100 or 500 for clean selling price
+                                val roundedClean = ((suggested + 49) / 50) * 50
+                                SuggestionChip(
+                                    onClick = { hargaJual = roundedClean.toString() },
+                                    label = {
+                                        Text("+$marginPct% (Rp$roundedClean)", fontSize = 10.sp)
+                                    },
+                                    colors = SuggestionChipDefaults.suggestionChipColors(
+                                        containerColor = if (hargaJual == roundedClean.toString()) EmeraldSuccess else EmeraldSurface,
+                                        labelColor = if (hargaJual == roundedClean.toString()) Color.White else EmeraldText
+                                    ),
+                                    border = null,
+                                    modifier = Modifier.height(28.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(tr("Batal", "Cancel", lang))
+                    }
+                    Button(
+                        onClick = {
+                            if (nama.isNotBlank()) {
+                                onSave(
+                                    product?.copy(
+                                        nama = nama,
+                                        kategori = kategori,
+                                        pabrikId = selectedPabrikId,
+                                        satuanBesar = satuanBesar.ifBlank { "Pack" },
+                                        satuanKecil = satuanKecil.ifBlank { "Pcs" },
+                                        rasioKonversi = rasioKonversi.toIntOrNull() ?: 10,
+                                        hargaBeliPabrik = hargaBeli.toDoubleOrNull() ?: 11000.0,
+                                        hargaJualDefault = hargaJual.toDoubleOrNull() ?: 1600.0
+                                    ) ?: ProductEntity(
+                                        nama = nama,
+                                        kategori = kategori,
+                                        pabrikId = selectedPabrikId,
+                                        satuanBesar = satuanBesar.ifBlank { "Pack" },
+                                        satuanKecil = satuanKecil.ifBlank { "Pcs" },
+                                        rasioKonversi = rasioKonversi.toIntOrNull() ?: 10,
+                                        hargaBeliPabrik = hargaBeli.toDoubleOrNull() ?: 11000.0,
+                                        hargaJualDefault = hargaJual.toDoubleOrNull() ?: 1600.0
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) {
+                        Text(tr("Simpan", "Save", lang))
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+// ADD/EDIT PABRIK DIALOG
+@Composable
+fun AddEditPabrikDialog(
+    pabrik: PabrikEntity?,
+    onDismiss: () -> Unit,
+    onSave: (PabrikEntity) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var namaPabrik by remember { mutableStateOf(pabrik?.namaPabrik ?: "") }
+    var cp by remember { mutableStateOf(pabrik?.namaCp ?: "") }
+    var noHp by remember { mutableStateOf(pabrik?.noHpCp ?: "") }
+    var kebijakan by remember { mutableStateOf(pabrik?.kebijakanRetur ?: "BS Tidak Diterima / Hangus") }
+    var rekening by remember { mutableStateOf(pabrik?.rekeningBank ?: "") }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = if (pabrik == null) "Tambah Master Pabrik" else "Edit Master Pabrik",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Slate900
+                )
+
+                OutlinedTextField(value = namaPabrik, onValueChange = { namaPabrik = it }, label = { Text(tr("Nama Pabrik / Principal", "Factory / Principal Name", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = cp, onValueChange = { cp = it }, label = { Text(tr("Nama Contact Person", "Contact Person Name", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = noHp, onValueChange = { noHp = it }, label = { Text(tr("Nomor HP / WhatsApp CP", "CP Phone / WhatsApp Number", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = kebijakan, onValueChange = { kebijakan = it }, label = { Text(tr("Kebijakan Retur Barang", "Product Return Policy", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = rekening, onValueChange = { rekening = it }, label = { Text(tr("Rekening Bank Transfer", "Bank Transfer Account", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(tr("Batal", "Cancel", lang)) }
+                    Button(
+                        onClick = {
+                            if (namaPabrik.isNotBlank()) {
+                                onSave(
+                                    pabrik?.copy(
+                                        namaPabrik = namaPabrik,
+                                        namaCp = cp,
+                                        noHpCp = noHp,
+                                        kebijakanRetur = kebijakan,
+                                        rekeningBank = rekening
+                                    ) ?: PabrikEntity(
+                                        namaPabrik = namaPabrik,
+                                        namaCp = cp,
+                                        noHpCp = noHp,
+                                        kebijakanRetur = kebijakan,
+                                        rekeningBank = rekening
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) { Text(tr("Simpan", "Save", lang)) }
+                }
+            }
+        }
+        }
+    }
+}
+
+// 9. ADD/EDIT WARUNG DIALOG
+@Composable
+fun AddEditWarungDialog(
+    warung: WarungEntity?,
+    rutes: List<RuteEntity>,
+    onDismiss: () -> Unit,
+    onSave: (WarungEntity) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var namaWarung by remember { mutableStateOf(warung?.namaWarung ?: "") }
+    var namaPemilik by remember { mutableStateOf(warung?.namaPemilik ?: "") }
+    var noHp by remember { mutableStateOf(warung?.noHp ?: "") }
+    var kategoriWarung by remember { mutableStateOf(warung?.kategoriWarung ?: "Kelontong") }
+    var alamat by remember { mutableStateOf(warung?.alamatLengkap ?: "") }
+    var notes by remember { mutableStateOf(warung?.notes ?: "") }
+    var limitHutang by remember { mutableStateOf("${warung?.limitHutangMaksimal?.toLong() ?: 500000}") }
+    val todayRute = remember(rutes) {
+        SfaViewModel.findRuteForToday(rutes)
+    }
+    var userManuallyChangedRute by remember { mutableStateOf(false) }
+    val initialRuteId = remember(warung, rutes, todayRute) {
+        warung?.ruteId ?: todayRute?.id ?: rutes.firstOrNull()?.id ?: ""
+    }
+    var ruteId by remember { mutableStateOf(initialRuteId) }
+
+    // Automatic route selection for new outlet: automatically selects today's route (Senin -> Senin, Sabtu -> Sabtu, etc.)
+    LaunchedEffect(rutes, todayRute) {
+        if (warung == null && !userManuallyChangedRute) {
+            val autoRute = todayRute ?: rutes.firstOrNull()
+            if (autoRute != null && (ruteId.isBlank() || ruteId == "RUTE-01" || !rutes.any { it.id == ruteId } || ruteId != autoRute.id)) {
+                ruteId = autoRute.id
+            }
+        }
+    }
+    var fotoOutlet by remember { mutableStateOf(warung?.fotoOutlet) }
+    var latitude by remember { mutableDoubleStateOf(warung?.latitude ?: 0.0) }
+    var longitude by remember { mutableDoubleStateOf(warung?.longitude ?: 0.0) }
+    var akurasiGps by remember { mutableIntStateOf(warung?.akurasiGpsMeter ?: 10) }
+    var showInAppCamera by remember { mutableStateOf(false) }
+
+    var isDetectingGps by remember { mutableStateOf(false) }
+    var gpsLockStatus by remember {
+        mutableStateOf(
+            if (warung != null && warung.latitude != 0.0) {
+                "Terkunci: ${String.format(Locale.US, "%.6f, %.6f", warung.latitude, warung.longitude)} (±${warung.akurasiGpsMeter}m)"
+            } else null
+        )
+    }
+
+    // Auto-initialize coordinates from actual live device location if no coordinates provided
+    LaunchedEffect(Unit) {
+        if (latitude == 0.0 || longitude == 0.0) {
+            val bestKnown = com.example.util.LocationHelper.getBestLastKnownLocation(context)
+            if (bestKnown != null && bestKnown.latitude != 0.0) {
+                latitude = bestKnown.latitude
+                longitude = bestKnown.longitude
+                akurasiGps = bestKnown.accuracy.toInt().coerceAtLeast(3)
+                gpsLockStatus = "Terkunci: ${String.format(Locale.US, "%.6f, %.6f", bestKnown.latitude, bestKnown.longitude)} (±${akurasiGps}m • ${bestKnown.provider})"
+                if (alamat.isBlank()) {
+                    alamat = try {
+                        com.example.util.LocationHelper.reverseGeocode(context, bestKnown.latitude, bestKnown.longitude)
+                    } catch (_: Exception) {
+                        "Koordinat: ${String.format(Locale.US, "%.6f, %.6f", bestKnown.latitude, bestKnown.longitude)}"
+                    }
+                }
+            } else {
+                latitude = com.example.util.LocationHelper.DEFAULT_LAT
+                longitude = com.example.util.LocationHelper.DEFAULT_LNG
+            }
+        }
+    }
+
+    val detectGpsAndReverseGeocode: () -> Unit = {
+        isDetectingGps = true
+        gpsLockStatus = "📡 Mengunci sinyal Satelit GPS (Mode Presisi Tinggi)..."
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val freshLoc = com.example.util.LocationHelper.acquireFreshSatelliteFix(context, maxTimeoutMs = 6000L, targetAccuracyMeters = 15f)
+                val detectedLat = if (freshLoc.isAvailable && freshLoc.latitude != 0.0) freshLoc.latitude else com.example.util.LocationHelper.DEFAULT_LAT
+                val detectedLng = if (freshLoc.isAvailable && freshLoc.longitude != 0.0) freshLoc.longitude else com.example.util.LocationHelper.DEFAULT_LNG
+                val detectedAccuracy = if (freshLoc.isAvailable) freshLoc.accuracyMeter.toInt().coerceAtLeast(2) else 8
+
+                val convertedAddress = try {
+                    com.example.util.LocationHelper.reverseGeocode(context, detectedLat, detectedLng)
+                } catch (_: Exception) {
+                    "Koordinat: ${String.format(Locale.US, "%.6f, %.6f", detectedLat, detectedLng)}"
+                }
+
+                withContext(Dispatchers.Main) {
+                    latitude = detectedLat
+                    longitude = detectedLng
+                    akurasiGps = detectedAccuracy
+                    if (alamat.isBlank() || alamat.startsWith("Koordinat GPS") || alamat.startsWith("Koordinat:")) {
+                        alamat = convertedAddress
+                    }
+                    gpsLockStatus = "Terkunci: ${String.format(Locale.US, "%.6f, %.6f", detectedLat, detectedLng)} (±${detectedAccuracy}m • ${freshLoc.provider})"
+                    isDetectingGps = false
+                }
+            } catch (e: Exception) {
+                val fallback = com.example.util.LocationHelper.getInstantLocation(context)
+                withContext(Dispatchers.Main) {
+                    latitude = fallback.latitude
+                    longitude = fallback.longitude
+                    akurasiGps = fallback.accuracyMeter.toInt().coerceAtLeast(10)
+                    gpsLockStatus = "Terkunci: ${String.format(Locale.US, "%.6f, %.6f", fallback.latitude, fallback.longitude)} (±${akurasiGps}m)"
+                    isDetectingGps = false
+                }
+            }
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        detectGpsAndReverseGeocode()
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            fotoOutlet = uri.toString()
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = if (warung == null) "Tambah Master Outlet" else "Edit Master Outlet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate900
+                        )
+                        Text(
+                            text = "Lengkapi data toko, lokasi GPS & catatan",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Slate500,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                // Generator Sugesti Nama Toko (100% Non-Nama Orang, Berbasis Kategori, Titik Temu & Makna Niaga)
+                var suggestionSeed by remember { mutableIntStateOf(0) }
+                val nonPersonSuggestions = remember(kategoriWarung, alamat, suggestionSeed) {
+                    val locWord = when {
+                        alamat.contains("Pasar", ignoreCase = true) -> "Pasar"
+                        alamat.contains("Simpang", ignoreCase = true) -> "Simpang"
+                        alamat.contains("Stasiun", ignoreCase = true) -> "Stasiun"
+                        alamat.contains("Terminal", ignoreCase = true) -> "Terminal"
+                        alamat.contains("Mawar", ignoreCase = true) -> "Mawar"
+                        alamat.contains("Melati", ignoreCase = true) -> "Melati"
+                        alamat.contains("Merdeka", ignoreCase = true) -> "Merdeka"
+                        alamat.contains("Beringin", ignoreCase = true) -> "Beringin"
+                        alamat.contains("Pojok", ignoreCase = true) -> "Pojok"
+                        alamat.contains("Jembatan", ignoreCase = true) -> "Jembatan"
+                        alamat.contains("Masjid", ignoreCase = true) -> "Masjid"
+                        alamat.contains("Raya", ignoreCase = true) -> "Raya"
+                        else -> ""
+                    }
+
+                    val basePool = when (kategoriWarung.lowercase()) {
+                        "warkop" -> listOf(
+                            if (locWord.isNotBlank()) "Warkop $locWord Jaya" else "Warkop Pojok Santai",
+                            "Warkop Simpang Empat",
+                            "Warkop Berkah Rejeki",
+                            "Kedai Kopi Sahabat",
+                            "Warkop Sinar Harapan",
+                            "Warkop Sedulur Makmur",
+                            "Warkop Titik Kumpul",
+                            "Kedai Pojok Barokah",
+                            "Warkop Harmoni Jaya",
+                            "Kopi Cangkir Rezeki"
+                        )
+                        "sembako" -> listOf(
+                            if (locWord.isNotBlank()) "Toko Sembako $locWord" else "Toko Sembako Berkah",
+                            "Pusat Sembako Makmur",
+                            "Kios Sembako Barokah",
+                            "Toko Sembako Sumber Rejeki",
+                            "Gudang Sembako Sentosa",
+                            "Kios Sembako Lancar",
+                            "Sembako Berkah Abadi",
+                            "Toko Sembako Murah Jaya",
+                            "Mitra Sembako Sejahtera"
+                        )
+                        "kantin/kios" -> listOf(
+                            if (locWord.isNotBlank()) "Kios $locWord Asri" else "Kios Pojok Berkah",
+                            "Kios Barokah Mart",
+                            "Kantin Sejahtera Mandiri",
+                            "Depot Sumber Rejeki",
+                            "Kios Simpang Lima",
+                            "Kios Harapan Jaya",
+                            "Kantin Berkah Rasa",
+                            "Kios Rejeki Lancar"
+                        )
+                        "minimarket" -> listOf(
+                            if (locWord.isNotBlank()) "$locWord Mart" else "Berkah Mart",
+                            "Barokah Express",
+                            "Sumber Makmur Mart",
+                            "Prima Jaya Mart",
+                            "Mitra Mandiri Mart",
+                            "Sentosa Mart",
+                            "Keluarga Mart",
+                            "Rezeki Sejahtera Mart"
+                        )
+                        "grosir" -> listOf(
+                            if (locWord.isNotBlank()) "Pusat Grosir $locWord" else "Pusat Grosir Berkah",
+                            "Grosir Makmur Abadi",
+                            "Sentosa Grosir",
+                            "Grosir Sumber Rejeki",
+                            "Grosir Bintang Jaya",
+                            "Grosir Serba Ada",
+                            "Grosir Maju Bersama",
+                            "Sentral Grosir Berkah"
+                        )
+                        else -> listOf(
+                            if (locWord.isNotBlank()) "Warung $locWord Berkah" else "Warung Berkah Jaya",
+                            "Toko Sumber Rejeki",
+                            "Warung Pojok Jaya",
+                            "Kios Makmur Sentosa",
+                            "Toko Barokah Sejahtera",
+                            "Warung Sederhana Makmur",
+                            "Toko Bintang Terang",
+                            "Warung Serba Ada",
+                            "Toko Rizki Utama",
+                            "Warung Berkah Abadi",
+                            "Kios Sahabat Mandiri"
+                        )
+                    }
+
+                    if (suggestionSeed > 0) basePool.shuffled() else basePool
+                }
+
+                OutlinedTextField(
+                    value = namaWarung,
+                    onValueChange = { namaWarung = it },
+                    label = { Text(tr("Nama Outlet / Toko *", "Outlet / Store Name *", lang)) },
+                    placeholder = { Text(tr("Contoh: Warung Berkah Jaya", "Example: Berkah Jaya Grocery", lang)) },
+                    singleLine = true,
+                    colors = appTextFieldColors(),
+                    shape = RoundedCornerShape(10.dp),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                val currentIdx = nonPersonSuggestions.indexOf(namaWarung)
+                                val nextIdx = if (currentIdx >= 0) (currentIdx + 1) % nonPersonSuggestions.size else (0 until nonPersonSuggestions.size).random()
+                                namaWarung = nonPersonSuggestions[nextIdx]
+                            }
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "Pilih Acak", tint = BlueAccent)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Clean Modern Rekomendasi Nama Cepat (Non-Nama Orang + Tombol Acak Baru)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Slate100.copy(alpha = 0.7f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.Lightbulb, contentDescription = null, tint = AmberWarning, modifier = Modifier.size(13.dp))
+                                Text(
+                                    text = "SUGESTI NAMA TOKO (NON-ORANG)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    color = Slate600,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { suggestionSeed++ }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Acak Variasi",
+                                    fontSize = 10.sp,
+                                    color = BlueAccent,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            nonPersonSuggestions.take(6).forEach { suggestedName ->
+                                val isCurrent = namaWarung == suggestedName
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isCurrent) BlueAccent else Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isCurrent) BlueAccent else Slate300
+                                    ),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { namaWarung = suggestedName }
+                                ) {
+                                    Text(
+                                        text = suggestedName,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isCurrent) Color.White else Slate800,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Kategori Outlet Fast Chips
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "KATEGORI OUTLET",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Slate600,
+                        letterSpacing = 0.5.sp
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Kelontong", "Warkop", "Sembako", "Kantin/Kios", "Minimarket", "Grosir").forEach { cat ->
+                            val isSelected = kategoriWarung.equals(cat, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { kategoriWarung = cat },
+                                label = { Text(cat, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Slate900,
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = namaPemilik,
+                        onValueChange = { namaPemilik = it },
+                        label = { Text(tr("Nama Pemilik", "Owner Name", lang)) },
+                        placeholder = { Text(tr("Ibu Siti", "Mrs. Siti", lang)) },
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1.1f)
+                    )
+
+                    OutlinedTextField(
+                        value = noHp,
+                        onValueChange = { noHp = it },
+                        label = { Text(tr("No. WA / HP", "WA / Phone No", lang)) },
+                        placeholder = { Text("0812...") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1.1f)
+                    )
+                }
+
+                // Pilih Jalur Rute Kunjungan
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "JALUR RUTE KUNJUNGAN *",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate600,
+                            letterSpacing = 0.5.sp
+                        )
+                        val activeRuteObj = rutes.find { it.id == ruteId }
+                        if (activeRuteObj != null) {
+                            val isTodayActive = todayRute?.id == activeRuteObj.id
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (isTodayActive) EmeraldSuccess else Slate900
+                            ) {
+                                Text(
+                                    text = if (isTodayActive) "⭐ Rute Hari Ini (${activeRuteObj.hariKunjungan})" else "Hari: ${activeRuteObj.hariKunjungan}",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (rutes.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            rutes.forEach { r ->
+                                val isSelected = ruteId == r.id
+                                val isToday = todayRute?.id == r.id
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        userManuallyChangedRute = true
+                                        ruteId = r.id
+                                    },
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "${r.namaRute.split("-").first().trim()} (${r.hariKunjungan})",
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                            if (isToday) {
+                                                Text(
+                                                    text = "• Hari Ini",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isSelected) AmberWarning else EmeraldText
+                                                )
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Slate900,
+                                        selectedLabelColor = Color.White,
+                                        containerColor = if (isToday) EmeraldSurface.copy(alpha = 0.5f) else Slate100,
+                                        labelColor = if (isToday) EmeraldText else Slate700
+                                    ),
+                                    border = if (isToday && !isSelected) androidx.compose.foundation.BorderStroke(1.dp, EmeraldBorder) else null
+                                )
+                            }
+                        }
+                    } else {
+                        Text(tr("Belum ada master rute. Default: Jalur 1", "No master routes yet. Default: Route 1", lang), fontSize = 11.sp, color = Slate500)
+                    }
+                }
+
+                // Alamat Field with GPS Auto-detect Button on the Side
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = alamat,
+                            onValueChange = { alamat = it },
+                            label = { Text(tr("Alamat Lengkap", "Full Address", lang)) },
+                            placeholder = { Text(tr("Ketik alamat atau klik tombol GPS", "Type address or tap GPS button", lang)) },
+                            colors = appTextFieldColors(),
+                            minLines = 2,
+                            maxLines = 3,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("input_alamat_warung")
+                        )
+
+                        // GPS Auto-detect Button
+                        Button(
+                            onClick = {
+                                locationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            },
+                            enabled = !isDetectingGps,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Slate900,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .height(64.dp)
+                                .testTag("btn_detect_gps_alamat")
+                        ) {
+                            if (isDetectingGps) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.5.dp
+                                )
+                            } else {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.GpsFixed,
+                                        contentDescription = tr("Deteksi GPS & Auto-Fill Alamat", "Detect GPS & Auto-Fill Address", lang),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "GPS",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // GPS Status / Lock indicator
+                    if (gpsLockStatus != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = EmeraldSurface,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = EmeraldSuccess,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = gpsLockStatus ?: "",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = EmeraldText,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Note / Catatan Toko Field
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text(tr("Note / Catatan Khusus Toko (Opsional)", "Special Store Notes (Optional)", lang)) },
+                    placeholder = { Text(tr("Contoh: Patokan seberang masjid, istirahat jam 12-13...", "Example: Landmark opposite mosque, lunch break 12-1", lang)) },
+                    minLines = 2,
+                    maxLines = 3,
+                    colors = appTextFieldColors(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_note_warung")
+                )
+
+                // Limit Bon Maksimal Field + Presets
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedTextField(
+                        value = limitHutang,
+                        onValueChange = { limitHutang = it },
+                        label = { Text(tr("Limit Bon Maksimal (Rp)", "Max Credit Limit (Rp)", lang)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        colors = appTextFieldColors(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(200000L to "200rb", 500000L to "500rb", 1000000L to "1 Juta", 2000000L to "2 Juta", 5000000L to "5 Juta").forEach { (amount, label) ->
+                            val isSelected = limitHutang == amount.toString()
+                            SuggestionChip(
+                                onClick = { limitHutang = amount.toString() },
+                                label = { Text(label, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = if (isSelected) Slate900 else Color.White,
+                                    labelColor = if (isSelected) Color.White else Slate800
+                                ),
+                                border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, Slate300),
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Foto Outlet (Opsional: Kamera In-App & Galeri)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "FOTO OUTLET / TOKO (OPSIONAL)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Slate500,
+                        letterSpacing = 0.5.sp
+                    )
+
+                    if (fotoOutlet != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Slate50),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(130.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Slate900),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = fotoOutlet,
+                                        contentDescription = tr("Foto Outlet", "Outlet Photo", lang),
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = EmeraldSuccess,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+                                            Text(tr("Foto Terpasang", "Photo Attached", lang), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { showInAppCamera = true },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(13.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(tr("Ulang Foto", "Retake Photo", lang), fontSize = 11.sp)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { galleryLauncher.launch("image/*") },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(13.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(tr("Galeri", "Gallery", lang), fontSize = 11.sp)
+                                    }
+
+                                    TextButton(
+                                        onClick = { fotoOutlet = null },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(tr("Hapus", "Delete", lang), color = RoseDanger, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Slate50,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AddPhotoAlternate,
+                                        contentDescription = null,
+                                        tint = Slate400,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = "Ambil foto tampak depan outlet / etalase toko",
+                                        fontSize = 11.sp,
+                                        color = Slate600
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = { showInAppCamera = true },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 8.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(tr("Kamera In-App", "In-App Camera", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { galleryLauncher.launch("image/*") },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 8.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(tr("Pilih Galeri", "Select Gallery", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(tr("Batal", "Cancel", lang), fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            if (namaWarung.isNotBlank()) {
+                                val resolvedRuteId = if (ruteId.isNotBlank() && rutes.any { it.id == ruteId }) {
+                                    ruteId
+                                } else {
+                                    todayRute?.id ?: rutes.firstOrNull()?.id ?: "RUTE-01"
+                                }
+                                onSave(
+                                    warung?.copy(
+                                        namaWarung = namaWarung,
+                                        namaPemilik = namaPemilik,
+                                        noHp = noHp,
+                                        kategoriWarung = kategoriWarung,
+                                        alamatLengkap = alamat,
+                                        notes = notes,
+                                        latitude = latitude,
+                                        longitude = longitude,
+                                        akurasiGpsMeter = akurasiGps,
+                                        limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
+                                        ruteId = resolvedRuteId,
+                                        fotoOutlet = fotoOutlet
+                                    ) ?: WarungEntity(
+                                        namaWarung = namaWarung,
+                                        namaPemilik = namaPemilik,
+                                        noHp = noHp,
+                                        kategoriWarung = kategoriWarung,
+                                        alamatLengkap = alamat,
+                                        notes = notes,
+                                        latitude = latitude,
+                                        longitude = longitude,
+                                        akurasiGpsMeter = akurasiGps,
+                                        limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
+                                        ruteId = resolvedRuteId,
+                                        fotoOutlet = fotoOutlet
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1.5f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(tr("Simpan Outlet", "Save Outlet", lang), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+    if (showInAppCamera) {
+        InAppCameraDialog(
+            onDismiss = { showInAppCamera = false },
+            onPhotoCaptured = { capturedUri ->
+                fotoOutlet = capturedUri
+                showInAppCamera = false
+            }
+        )
+    }
+}
+
+// 10. ADD/EDIT RUTE DIALOG
+@Composable
+fun AddEditRuteDialog(
+    rute: RuteEntity?,
+    onDismiss: () -> Unit,
+    onSave: (RuteEntity) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var namaRute by remember { mutableStateOf(rute?.namaRute ?: "") }
+    var hari by remember { mutableStateOf(rute?.hariKunjungan ?: "Senin") }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = if (rute == null) "Tambah Rute Jalur" else "Edit Rute Jalur",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                OutlinedTextField(value = namaRute, onValueChange = { namaRute = it }, label = { Text(tr("Nama Rute / Jalur", "Route Name", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = hari, onValueChange = { hari = it }, label = { Text(tr("Hari Kunjungan", "Visit Day", lang)) }, colors = appTextFieldColors(), modifier = Modifier.fillMaxWidth())
+
+                Text(
+                    text = tr("Pilih Hari Cepat:", "Quick Day Select:", lang),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Slate600
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu").forEach { d ->
+                        val isSel = hari.trim().equals(d, ignoreCase = true)
+                        FilterChip(
+                            selected = isSel,
+                            onClick = { hari = d },
+                            label = { Text(d, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Slate900,
+                                selectedLabelColor = Color.White,
+                                containerColor = Slate100,
+                                labelColor = Slate700
+                            ),
+                            border = null
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(tr("Batal", "Cancel", lang)) }
+                    Button(
+                        onClick = {
+                            if (namaRute.isNotBlank()) {
+                                onSave(
+                                    rute?.copy(namaRute = namaRute, hariKunjungan = hari)
+                                        ?: RuteEntity(namaRute = namaRute, hariKunjungan = hari)
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) { Text(tr("Simpan", "Save", lang)) }
+                }
+            }
+        }
+        }
+    }
+}
+
+// 11. WARUNG DETAIL DIALOG
+@Composable
+fun WarungDetailDialog(
+    warung: WarungEntity,
+    onDismiss: () -> Unit,
+    onWriteOff: () -> Unit,
+    onManageCustomPrices: () -> Unit = {},
+    onViewStatistics: () -> Unit = {}
+) {
+    val lang = LocalAppLanguage.current
+
+    // Forward directly to full-fledged Outlet Detail & Statistics Dialog
+    onViewStatistics()
+}
+
+// 11B. OUTLET COMPREHENSIVE STATISTICS & PERFORMANCE ANALYTICS DIALOG
+data class ProductSalesStat(val name: String, val pcs: Int, val revenue: Double)
+
+enum class OutletTxFilter(val idLabel: String, val enLabel: String) {
+    SEMUA("Semua Transaksi", "All Transactions"),
+    TITIP_BARU("Drop Konsinyasi", "Consignment Drop"),
+    TARIK_SETTLE("Tarik & Settle", "Return & Settle"),
+    LUNAS("Lunas", "Paid in Full"),
+    PIUTANG_BON("Ada Bon / Piutang", "Has Credit / Debt");
+
+    fun getLabel(lang: String): String = if (lang == "EN") enLabel else idLabel
+}
+
+enum class OutletTxSort(val idLabel: String, val enLabel: String) {
+    TERBARU("Terbaru (Waktu)", "Newest (Time)"),
+    TERLAMA("Terlama", "Oldest"),
+    NILAI_TERBESAR("Nilai Omset Terbesar", "Highest Revenue"),
+    PCS_TERBANYAK("Qty Laku Terbanyak", "Highest Sold Qty"),
+    RETUR_BS_TERBANYAK("Retur Terbanyak", "Highest Returns");
+
+    fun getLabel(lang: String): String = if (lang == "EN") enLabel else idLabel
+}
+
+@Composable
+fun OutletStatisticsDialog(
+    warung: WarungEntity,
+    transactions: List<TransactionEntity>,
+    products: List<ProductEntity>,
+    userProfile: UserProfileEntity? = null,
+    onDismiss: () -> Unit,
+    onTitipBaru: () -> Unit,
+    onTarikSisa: () -> Unit,
+    onManageCustomPrices: () -> Unit,
+    onAiRecommendation: () -> Unit = {}
+) {
+    val lang = LocalAppLanguage.current
+
+    val context = LocalContext.current
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf(OutletTxFilter.SEMUA) }
+    var selectedSort by remember { mutableStateOf(OutletTxSort.TERBARU) }
+    var showSortMenu by remember { mutableStateOf(false) }
+    var selectedReceiptTx by remember { mutableStateOf<TransactionEntity?>(null) }
+
+    // Live GPS distance
+    val currentGps = remember { LocationHelper.getInstantLocation(context) }
+    val distanceMeters = remember(currentGps, warung) {
+        LocationHelper.calculateDistanceMeters(currentGps.latitude, currentGps.longitude, warung.latitude, warung.longitude)
+    }
+    val formattedDistance = remember(distanceMeters) {
+        LocationHelper.formatDistance(distanceMeters)
+    }
+
+    // Filtered & Sorted Transactions
+    val processedTransactions = remember(transactions, searchQuery, selectedFilter, selectedSort) {
+        transactions.filter { tx ->
+            val matchesSearch = if (searchQuery.isBlank()) true else {
+                val prod = products.find { it.id == tx.productId }
+                tx.tanggal.contains(searchQuery, ignoreCase = true) ||
+                tx.catatan.contains(searchQuery, ignoreCase = true) ||
+                tx.jenis.contains(searchQuery, ignoreCase = true) ||
+                (prod?.nama?.contains(searchQuery, ignoreCase = true) == true)
+            }
+
+            val matchesFilter = when (selectedFilter) {
+                OutletTxFilter.SEMUA -> true
+                OutletTxFilter.TITIP_BARU -> tx.jenis == "TITIP_BARU"
+                OutletTxFilter.TARIK_SETTLE -> tx.jenis != "TITIP_BARU" && tx.jenis != "CLOSING_HARIAN"
+                OutletTxFilter.LUNAS -> tx.statusBayar.equals("LUNAS", ignoreCase = true) || tx.uangDiterima >= tx.grandTotalTagihan
+                OutletTxFilter.PIUTANG_BON -> tx.grandTotalTagihan > tx.uangDiterima || tx.statusBayar.contains("BON", ignoreCase = true)
+            }
+
+            matchesSearch && matchesFilter
+        }.sortedWith { a, b ->
+            when (selectedSort) {
+                OutletTxSort.TERBARU -> b.timestamp.compareTo(a.timestamp)
+                OutletTxSort.TERLAMA -> a.timestamp.compareTo(b.timestamp)
+                OutletTxSort.NILAI_TERBESAR -> b.grandTotalTagihan.compareTo(a.grandTotalTagihan)
+                OutletTxSort.PCS_TERBANYAK -> b.pcsLaku.compareTo(a.pcsLaku)
+                OutletTxSort.RETUR_BS_TERBANYAK -> b.bsDitarikPcs.compareTo(a.bsDitarikPcs)
+            }
+        }
+    }
+
+    val totalTransactionsCount = transactions.size
+    val totalGrossSales = transactions.sumOf { it.subtotalLaku }
+    val totalCashCollected = transactions.sumOf { it.uangDiterima }
+    val totalPcsSold = transactions.sumOf { it.pcsLaku }
+    val totalBsPcs = transactions.sumOf { it.bsDitarikPcs }
+
+    val avgSalesPerVisit = if (totalTransactionsCount > 0) totalGrossSales / totalTransactionsCount else 0.0
+    val avgPcsPerVisit = if (totalTransactionsCount > 0) totalPcsSold.toDouble() / totalTransactionsCount else 0.0
+    val collectionRatePercent = if (totalGrossSales > 0.0) ((totalCashCollected / totalGrossSales) * 100.0).coerceIn(0.0, 100.0) else 100.0
+    val bsRatioPercent = if (totalPcsSold + totalBsPcs > 0) ((totalBsPcs.toDouble() / (totalPcsSold + totalBsPcs)) * 100.0) else 0.0
+
+    // Visit days calculation
+    val daysSinceVisit = if (warung.tglKunjunganTerakhir > 0) {
+        ((System.currentTimeMillis() - warung.tglKunjunganTerakhir) / (1000 * 60 * 60 * 24)).toInt().coerceAtLeast(0)
+    } else 999
+
+    // Estimated daily velocity (consumption rate)
+    val dailyVelocity = if (totalTransactionsCount >= 2) {
+        (totalPcsSold.toDouble() / (totalTransactionsCount * 7.0)).coerceAtLeast(0.5)
+    } else {
+        (totalPcsSold.toDouble() / 7.0).coerceAtLeast(0.5)
+    }
+    val suggestedRestock7Days = (dailyVelocity * 7.0).toInt().coerceIn(6, 60)
+    val estimatedDaysLeft = if (dailyVelocity > 0 && warung.stokTitipanPcs > 0) (warung.stokTitipanPcs / dailyVelocity).toInt() else 0
+
+    // Top selling products in this warung
+    val productSales: List<ProductSalesStat> = remember(transactions, products) {
+        transactions.groupBy { it.productId }.map { (pId, txList) ->
+            val prod = products.find { it.id == pId }
+            val pcs = txList.sumOf { it.pcsLaku }
+            val rev = txList.sumOf { it.subtotalLaku }
+            ProductSalesStat(prod?.nama ?: "Produk SKU #$pId", pcs, rev)
+        }.sortedByDescending { it.pcs }
+    }
+
+    // Last 6 transactions for trend visualization
+    val recentTx = remember(transactions) {
+        transactions.sortedByDescending { it.timestamp }.take(6).reversed()
+    }
+    val maxTxPcs = (recentTx.maxOfOrNull { it.pcsLaku } ?: 1).coerceAtLeast(1)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White, contentColor = Slate900),
+                modifier = Modifier
+                    .fillMaxWidth(0.96f)
+                    .fillMaxHeight(0.96f)
+                    .padding(vertical = 4.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Header: Title, Outlet Name & Close Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Slate900),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Storefront, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                        }
+                        Column {
+                            Text(
+                                text = warung.namaWarung,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "${tr("Pemilik", "Owner", lang)}: ${warung.namaPemilik.ifBlank { "-" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Slate600
+                                )
+                                Text("•", fontSize = 10.sp, color = Slate400)
+                                Text(
+                                    text = formattedDistance,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EmeraldSuccess
+                                )
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Slate100)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate700, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                // 3 TABS: 0 -> Riwayat Transaksi, 1 -> Ringkasan & Analisis, 2 -> Profil & Lokasi
+                TabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    containerColor = Slate100,
+                    contentColor = Slate900,
+                    indicator = { tabPositions ->
+                        if (selectedTabIndex < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                                color = Slate900,
+                                height = 3.dp
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                ) {
+                    Tab(
+                        selected = selectedTabIndex == 0,
+                        onClick = { selectedTabIndex = 0 },
+                        selectedContentColor = Slate900,
+                        unselectedContentColor = Slate600,
+                        text = {
+                            Text(
+                                tr("Riwayat Tx (${transactions.size})", "Tx History (${transactions.size})", lang),
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTabIndex == 0) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTabIndex == 0) Slate900 else Slate700
+                            )
+                        }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
+                        selectedContentColor = Slate900,
+                        unselectedContentColor = Slate600,
+                        text = {
+                            Text(
+                                tr("Analisis", "Analysis", lang),
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTabIndex == 1) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTabIndex == 1) Slate900 else Slate700
+                            )
+                        }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 2,
+                        onClick = { selectedTabIndex = 2 },
+                        selectedContentColor = Slate900,
+                        unselectedContentColor = Slate600,
+                        text = {
+                            Text(
+                                tr("Profil & GPS", "Profile & GPS", lang),
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTabIndex == 2) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTabIndex == 2) Slate900 else Slate700
+                            )
+                        }
+                    )
+                }
+
+                // MAIN CONTENT ACCORDING TO ACTIVE TAB
+                Box(modifier = Modifier.weight(1f)) {
+                    when (selectedTabIndex) {
+                        // TAB 0: RIWAYAT TRANSAKSI LENGKAP DENGAN FILTER & SORT
+                        0 -> {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Search Bar & Sort Button
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        placeholder = { Text(tr("Cari tanggal, produk, catatan...", "Search date, product, notes...", lang), fontSize = 12.sp) },
+                                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                        trailingIcon = {
+                                            if (searchQuery.isNotBlank()) {
+                                                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
+                                                    Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(14.dp))
+                                                }
+                                            }
+                                        },
+                                        singleLine = true,
+                                        colors = appTextFieldColors(),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(44.dp)
+                                    )
+
+                                    // Sort Menu Trigger
+                                    Box {
+                                        OutlinedButton(
+                                            onClick = { showSortMenu = true },
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                            modifier = Modifier.height(44.dp)
+                                        ) {
+                                            Icon(Icons.Default.Sort, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(tr("Urutkan", "Sort", lang), fontSize = 11.sp)
+                                        }
+
+                                        DropdownMenu(
+                                            expanded = showSortMenu,
+                                            onDismissRequest = { showSortMenu = false }
+                                        ) {
+                                            OutletTxSort.values().forEach { sortOption ->
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            if (selectedSort == sortOption) {
+                                                                Icon(Icons.Default.Check, contentDescription = null, tint = Slate900, modifier = Modifier.size(14.dp))
+                                                                Spacer(modifier = Modifier.width(8.dp))
+                                                            }
+                                                            Text(sortOption.getLabel(lang), fontSize = 12.sp, fontWeight = if (selectedSort == sortOption) FontWeight.Bold else FontWeight.Normal)
+                                                        }
+                                                    },
+                                                    onClick = {
+                                                        selectedSort = sortOption
+                                                        showSortMenu = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Filter Chips Horizontal Scroll
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutletTxFilter.values().forEach { filterOpt ->
+                                        val isSelected = selectedFilter == filterOpt
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = { selectedFilter = filterOpt },
+                                            label = { Text(filterOpt.getLabel(lang), fontSize = 11.sp) },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = Slate900,
+                                                selectedLabelColor = Color.White,
+                                                containerColor = Slate100,
+                                                labelColor = Slate700
+                                            ),
+                                            border = null,
+                                            modifier = Modifier.height(30.dp)
+                                        )
+                                    }
+                                }
+
+                                // Transaction List
+                                if (processedTransactions.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Slate300, modifier = Modifier.size(40.dp))
+                                            Text(tr("Tidak ada riwayat transaksi yang cocok", "No matching transaction history found", lang), fontSize = 12.sp, color = Slate500)
+                                        }
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        contentPadding = PaddingValues(bottom = 12.dp)
+                                    ) {
+                                        items(processedTransactions, key = { it.id }) { tx ->
+                                            val prod = products.find { it.id == tx.productId }
+                                            val satuanKecil = prod?.satuanKecil ?: "Pcs"
+                                            val isTitip = tx.jenis == "TITIP_BARU"
+                                            val isLunas = tx.uangDiterima >= tx.grandTotalTagihan
+
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { selectedReceiptTx = tx },
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = CardDefaults.cardColors(containerColor = Slate50),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    // Header Row: Type badge, Date, Struk button
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                        ) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = if (isTitip) BlueSurface else EmeraldSurface,
+                                                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isTitip) BlueBorder else EmeraldBorder)
+                                                            ) {
+                                                                Text(
+                                                                    text = if (isTitip) tr("DROP TITIP", "DROP CONSIGN", lang) else tr("TARIK & SETTLE", "RETURN & SETTLE", lang),
+                                                                    color = if (isTitip) BlueAccent else EmeraldText,
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                                )
+                                                            }
+                                                            Text(
+                                                                text = tx.tanggal,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Slate800
+                                                            )
+                                                        }
+
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = if (isLunas) EmeraldSurface else AmberSurface
+                                                        ) {
+                                                            Text(
+                                                                text = if (isLunas) tr("Lunas", "Paid", lang) else tr("Ada Bon", "Has Debt", lang),
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = if (isLunas) EmeraldText else AmberText,
+                                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // Product & Quantities
+                                                    val qtyDititip = if (tx.restockBaruPcs > 0) tx.restockBaruPcs else tx.totalTitipanAktifPcs
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column {
+                                                            Text(
+                                                                text = prod?.nama ?: "Produk SKU #${tx.productId}",
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Slate900
+                                                            )
+                                                            Text(
+                                                                text = if (isTitip) "${tr("Jumlah Dititipkan", "Consigned Qty", lang)}: $qtyDititip $satuanKecil" else "${tr("Laku", "Sold", lang)}: ${tx.pcsLaku} $satuanKecil • ${tr("Retur Ditarik", "Returns", lang)}: ${tx.bsDitarikPcs} $satuanKecil",
+                                                                fontSize = 11.sp,
+                                                                color = Slate600
+                                                            )
+                                                        }
+
+                                                        Column(horizontalAlignment = Alignment.End) {
+                                                            if (isTitip) {
+                                                                val nilaiDrop = qtyDititip * tx.hargaSatuan
+                                                                Text(
+                                                                    text = SfaViewModel.formatRupiah(nilaiDrop),
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = Slate900
+                                                                )
+                                                                Text(
+                                                                    text = tr("Drop Konsinyasi", "Consignment Drop", lang),
+                                                                    fontSize = 10.sp,
+                                                                    color = BlueAccent,
+                                                                    fontWeight = FontWeight.SemiBold
+                                                                )
+                                                            } else {
+                                                                Text(
+                                                                    text = SfaViewModel.formatRupiah(tx.grandTotalTagihan),
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = Slate900
+                                                                )
+                                                                Text(
+                                                                    text = "${tr("Bayar", "Paid", lang)}: ${SfaViewModel.formatRupiah(tx.uangDiterima)}",
+                                                                    fontSize = 10.sp,
+                                                                    color = if (isLunas) EmeraldSuccess else AmberWarning
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (tx.catatan.isNotBlank()) {
+                                                        Text(
+                                                            text = "${tr("Catatan", "Notes", lang)}: ${tx.catatan}",
+                                                            fontSize = 10.sp,
+                                                            color = Slate500,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = SfaViewModel.formatDate(tx.timestamp),
+                                                            fontSize = 9.sp,
+                                                            color = Slate400
+                                                        )
+                                                        Text(
+                                                            text = tr("Lihat Detail Struk >", "View Receipt Detail >", lang),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = BlueAccent
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 1: RINGKASAN & ANALISIS PERFORMA
+                        1 -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                // 1. Status & Aging banner
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Slate50,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = "${warung.kategoriWarung} • ${tr("Urutan", "Order", lang)} #${warung.urutanKunjungan}",
+                                                fontSize = 11.sp,
+                                                color = Slate600
+                                            )
+                                            Text(
+                                                text = tr("Kunjungan Terakhir:", "Last Visit:", lang),
+                                                fontSize = 10.sp,
+                                                color = Slate500
+                                            )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = when {
+                                                daysSinceVisit >= 14 -> Color(0xFFFEE2E2)
+                                                daysSinceVisit >= 7 -> Color(0xFFFEF3C7)
+                                                daysSinceVisit == 0 -> Color(0xFFECFDF5)
+                                                else -> Slate200
+                                            }
+                                        ) {
+                                            Text(
+                                                text = when {
+                                                    daysSinceVisit == 0 -> tr("Hari ini", "Today", lang)
+                                                    daysSinceVisit >= 900 -> tr("Belum Pernah", "Never", lang)
+                                                    daysSinceVisit >= 14 -> "⚠️ $daysSinceVisit ${tr("hari lalu (Kritis)", "days ago (Critical)", lang)}"
+                                                    daysSinceVisit >= 7 -> "⚠️ $daysSinceVisit ${tr("hari lalu (Tempo)", "days ago (Due)", lang)}"
+                                                    else -> "$daysSinceVisit ${tr("hari lalu", "days ago", lang)}"
+                                                },
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = when {
+                                                    daysSinceVisit >= 14 -> RoseDanger
+                                                    daysSinceVisit >= 7 -> AmberText
+                                                    daysSinceVisit == 0 -> EmeraldText
+                                                    else -> Slate700
+                                                },
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // 2. Performa Penjualan
+                                Text(tr("PERFORMA PENJUALAN & OMSET", "SALES & REVENUE PERFORMANCE", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(shape = RoundedCornerShape(10.dp), color = Slate100, modifier = Modifier.weight(1f)) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("TOTAL OMSET", "TOTAL REVENUE", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate500)
+                                            Text(SfaViewModel.formatRupiah(totalGrossSales), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                            Text(tr("Semua Transaksi", "All Transactions", lang), fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                    Surface(shape = RoundedCornerShape(10.dp), color = Slate100, modifier = Modifier.weight(1f)) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("TOTAL LAKU", "TOTAL SOLD", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate500)
+                                            Text("$totalPcsSold ${tr("Unit", "Units", lang)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                            Text(tr("$totalTransactionsCount x Kunjungan", "$totalTransactionsCount x Visits", lang), fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                }
+
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(shape = RoundedCornerShape(10.dp), color = Slate50, border = androidx.compose.foundation.BorderStroke(1.dp, Slate200), modifier = Modifier.weight(1f)) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("RATA-RATA / KUNJUNGAN", "AVERAGE / VISIT", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate500)
+                                            Text(SfaViewModel.formatRupiah(avgSalesPerVisit), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = EmeraldSuccess)
+                                            Text(String.format(java.util.Locale.US, "%.1f %s", avgPcsPerVisit, tr("unit / visit", "units / visit", lang)), fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                    Surface(shape = RoundedCornerShape(10.dp), color = Slate50, border = androidx.compose.foundation.BorderStroke(1.dp, Slate200), modifier = Modifier.weight(1f)) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("KAS TERKUMPUL", "CASH COLLECTED", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate500)
+                                            Text(SfaViewModel.formatRupiah(totalCashCollected), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                            Text(tr("${collectionRatePercent.toInt()}% Terbayar Tunai", "${collectionRatePercent.toInt()}% Paid in Cash", lang), fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                }
+
+                                // 3. Smart Restock & Velocity
+                                Text(tr("KECEPATAN PERPUTARAN & SARAN RESTOCK", "TURNOVER VELOCITY & RESTOCK ADVICE", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFFEFF6FF),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Icon(Icons.Default.Speed, contentDescription = null, tint = Color(0xFF1D4ED8), modifier = Modifier.size(16.dp))
+                                                Text(tr("Smart Restock Forecast", "Smart Restock Forecast", lang), fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF1E40AF))
+                                            }
+                                            Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFFDBEAFE)) {
+                                                Text(String.format(java.util.Locale.US, "%.1f %s", dailyVelocity, tr("unit/hari", "units/day", lang)), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF), modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+                                            }
+                                        }
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Column {
+                                                Text(tr("Disarankan Titip (7 Hari):", "Recommended Drop (7 Days):", lang), fontSize = 10.sp, color = Slate700)
+                                                Text("$suggestedRestock7Days ${tr("Unit", "Units", lang)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E3A8A))
+                                            }
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(tr("Sisa Titipan Fisik:", "Remaining Consignment Stock:", lang), fontSize = 10.sp, color = Slate700)
+                                                Text("${warung.stokTitipanPcs} ${tr("Unit", "Units", lang)} (${if (estimatedDaysLeft > 0) tr("cukup ~$estimatedDaysLeft hari", "~$estimatedDaysLeft days left", lang) else tr("stok menipis", "low stock", lang)})", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (warung.stokTitipanPcs <= 5) RoseDanger else Slate900)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 4. Piutang & BS Ratio
+                                Text(tr("KESEHATAN PIUTANG & TINGKAT RETUR", "CREDIT HEALTH & RETURN RATIO", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (warung.saldoPiutang > 0) Color(0xFFFFFBEB) else Color(0xFFECFDF5),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (warung.saldoPiutang > 0) AmberBorder else EmeraldBorder),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("SALDO BON AKTIF", "ACTIVE CREDIT BALANCE", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate600)
+                                            Text(SfaViewModel.formatRupiah(warung.saldoPiutang), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (warung.saldoPiutang > 0) AmberWarning else EmeraldSuccess)
+                                            Text("${tr("Limit", "Limit", lang)}: ${SfaViewModel.formatRupiah(warung.limitHutangMaksimal)}", fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (bsRatioPercent > 5.0) Color(0xFFFFF1F2) else Slate50,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (bsRatioPercent > 5.0) RoseBorder else Slate200),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(tr("PERSENTASE RETUR", "RETURN GOODS RATE", lang), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate600)
+                                            Text(String.format(java.util.Locale.US, "%.1f%% %s", bsRatioPercent, tr("Retur", "Returns", lang)), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (bsRatioPercent > 5.0) RoseDanger else EmeraldSuccess)
+                                            Text(tr("$totalBsPcs Unit Pernah Retur", "$totalBsPcs Units Ever Returned", lang), fontSize = 9.sp, color = Slate500)
+                                        }
+                                    }
+                                }
+
+                                // 5. Top Products
+                                if (productSales.isNotEmpty()) {
+                                    Text(tr("PRODUK TERLARIS DI TOKO INI", "TOP SELLING PRODUCTS IN THIS STORE", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                    val topPcsMax = productSales.firstOrNull()?.pcs?.coerceAtLeast(1) ?: 1
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        productSales.take(5).forEachIndexed { idx, item ->
+                                            val ratio = (item.pcs.toFloat() / topPcsMax).coerceIn(0.1f, 1f)
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Slate50,
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("#${idx + 1} ${item.name}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text("${item.pcs} ${tr("Unit", "Units", lang)} (${SfaViewModel.formatRupiah(item.revenue)})", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate800)
+                                                    }
+                                                    LinearProgressIndicator(progress = { ratio }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape), color = if (idx == 0) AmberWarning else Slate700, trackColor = Slate200)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 6. Historical trend
+                                if (recentTx.isNotEmpty()) {
+                                    Text(tr("TREN KUNJUNGAN TERAKHIR", "RECENT VISIT TREND", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                    Surface(shape = RoundedCornerShape(10.dp), color = Slate50, border = androidx.compose.foundation.BorderStroke(1.dp, Slate200), modifier = Modifier.fillMaxWidth()) {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                                                recentTx.forEach { tx ->
+                                                    val heightRatio = (tx.pcsLaku.toFloat() / maxTxPcs).coerceIn(0.15f, 1f)
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                        Text("${tx.pcsLaku}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Slate800)
+                                                        Box(modifier = Modifier.width(28.dp).height((40 * heightRatio).dp).clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)).background(if (tx.pcsLaku > 0) EmeraldSuccess else Slate300))
+                                                        Text(text = tx.tanggal.takeLast(5), fontSize = 8.sp, color = Slate500)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 2: PROFIL TOKO & NAVIGASI GPS OFFLINE
+                        2 -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Photo if available
+                                if (warung.fotoOutlet != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(140.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Slate900),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AsyncImage(
+                                            model = warung.fotoOutlet,
+                                            contentDescription = tr("Foto Outlet", "Outlet Photo", lang),
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+                                }
+
+                                // Profile Cards
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Slate50,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(tr("INFORMASI TOKO", "STORE INFORMATION", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(tr("Nama Pemilik:", "Owner Name:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(warung.namaPemilik.ifBlank { "-" }, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                        }
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(tr("Kategori:", "Category:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(warung.kategoriWarung, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                        }
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(tr("Urutan Kunjungan:", "Visit Order:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(tr("Nomor #${warung.urutanKunjungan}", "Number #${warung.urutanKunjungan}", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                        }
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(tr("Status Outlet:", "Outlet Status:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(if (warung.status == "Blacklist") tr("Blacklist", "Blacklist", lang) else tr(warung.status, warung.status, lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (warung.status == "Blacklist") RoseDanger else EmeraldSuccess)
+                                        }
+                                    }
+                                }
+
+                                // Location & Distance Card
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Slate50,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(tr("LOKASI & JARAK REALTIME", "REAL-TIME LOCATION & DISTANCE", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 0.5.sp)
+
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(Icons.Default.LocationOn, contentDescription = null, tint = Slate600, modifier = Modifier.size(16.dp))
+                                            Text(warung.alamatLengkap.ifEmpty { tr("Belum ada alamat tertulis", "No written address yet", lang) }, fontSize = 11.sp, color = Slate800)
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Slate100,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Icon(Icons.Default.NearMe, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(16.dp))
+                                                    Column {
+                                                        Text(tr("Jarak dari Posisi Anda:", "Distance from Your Position:", lang), fontSize = 10.sp, color = Slate500)
+                                                        Text(formattedDistance, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                                    }
+                                                }
+
+                                                Button(
+                                                    onClick = {
+                                                        com.example.util.LocationHelper.openGoogleMapsNavigation(
+                                                            context = context,
+                                                            lat = warung.latitude,
+                                                            lng = warung.longitude,
+                                                            outletName = warung.namaWarung
+                                                        )
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Directions, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(tr("Buka Maps", "Open Maps", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+
+                                        Text(
+                                            text = "${tr("Koordinat", "Coordinates", lang)}: Lat ${String.format(Locale.US, "%.5f", warung.latitude)}, Lng ${String.format(Locale.US, "%.5f", warung.longitude)} (±${warung.akurasiGpsMeter}m)",
+                                            fontSize = 10.sp,
+                                            color = Slate500
+                                        )
+                                    }
+                                }
+
+                                if (warung.notes.isNotBlank()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = AmberSurface,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, AmberBorder),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(Icons.Default.Notes, contentDescription = null, tint = AmberText, modifier = Modifier.size(16.dp))
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text(tr("CATATAN OUTLET", "OUTLET NOTES", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AmberText)
+                                                Text(warung.notes, fontSize = 11.sp, color = Slate900)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                // BOTTOM ACTION BAR
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onAiRecommendation,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = EmeraldPrimary),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = EmeraldPrimary)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(tr("AI Saran", "AI Suggestion", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onTitipBaru,
+                        modifier = Modifier.weight(0.9f),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.AddShoppingCart, contentDescription = null, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(tr("Titip", "Consign", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = onTarikSisa,
+                        modifier = Modifier.weight(1.1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.SyncAlt, contentDescription = null, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(tr("Tarik/Ganti", "Return/Exchange", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onManageCustomPrices,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Sell, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(tr("Harga", "Price", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    // Interactive Full Receipt / Faktur Thermal Dialog (Sama persis dengan Struk di Laporan)
+    selectedReceiptTx?.let { tx ->
+        val prod = products.find { it.id == tx.productId }
+        ReceiptDialog(
+            transaction = tx,
+            warung = warung,
+            product = prod,
+            userProfile = userProfile,
+            onDismiss = { selectedReceiptTx = null }
+        )
+    }
+}
+
+// 12. GPS TOOL DIALOG
+@Composable
+fun GpsToolDialog(onDismiss: () -> Unit) {
+    val lang = LocalAppLanguage.current
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var currentLoc by remember { mutableStateOf(com.example.util.LocationHelper.getInstantLocation(context)) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var addressText by remember(currentLoc) {
+        mutableStateOf(
+            if (currentLoc.isAvailable) {
+                com.example.util.LocationHelper.reverseGeocode(context, currentLoc.latitude, currentLoc.longitude)
+            } else {
+                tr("Sensor GPS aktif (mencari sinyal satelit...)", "GPS sensor active (searching satellite signal...)", lang)
+            }
+        )
+    }
+
+    val refreshLocation = {
+        isRefreshing = true
+        addressText = tr("📡 Mencari dan mengunci satelit GPS GNSS (Mode Offline)...", "📡 Searching and locking GPS GNSS satellites (Offline Mode)...", lang)
+        coroutineScope.launch(Dispatchers.IO) {
+            val freshLoc = com.example.util.LocationHelper.acquireFreshSatelliteFix(context, maxTimeoutMs = 12000L, targetAccuracyMeters = 20f)
+            val addr = if (freshLoc.isAvailable) {
+                com.example.util.LocationHelper.reverseGeocode(context, freshLoc.latitude, freshLoc.longitude)
+            } else {
+                tr("Sensor GPS aktif (mencari sinyal satelit di ruang terbuka...)", "GPS sensor active (searching satellite signal in open sky...)", lang)
+            }
+            withContext(Dispatchers.Main) {
+                currentLoc = freshLoc
+                addressText = addr
+                isRefreshing = false
+            }
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshLocation()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White,
+                contentColor = Slate900
+            ),
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(imageVector = Icons.Default.GpsFixed, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(40.dp))
+                Text(tr("GPS Sensor Terkunci", "GPS Sensor Locked", lang), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Slate50,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(tr("Koordinat:", "Coordinates:", lang), fontSize = 11.sp, color = Slate600, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = String.format(Locale.US, "%.5f, %.5f", currentLoc.latitude, currentLoc.longitude),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate900
+                            )
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(tr("Akurasi Sensor:", "Sensor Accuracy:", lang), fontSize = 11.sp, color = Slate600, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = if (currentLoc.isAvailable) "${currentLoc.accuracyMeter.toInt().coerceAtLeast(3)} ${tr("meter (Akurat)", "meters (Accurate)", lang)}" else tr("Mencari Sinyal", "Searching Signal", lang),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (currentLoc.isAvailable) EmeraldSuccess else AmberWarning
+                            )
+                        }
+                        HorizontalDivider(color = Slate200)
+                        Text(
+                            text = "${tr("Wilayah / Alamat", "Area / Address", lang)}: $addressText",
+                            fontSize = 11.sp,
+                            color = Slate700
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            locationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        if (isRefreshing) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(tr("Kunci Ulang", "Relock", lang), fontSize = 11.sp)
+                        }
+                    }
+
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(tr("Tutup", "Close", lang), fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 13. USER PROFILE / IDENTITAS SALESMAN DIALOG
+@Composable
+fun UserProfileDialog(
+    currentProfile: UserProfileEntity?,
+    onDismiss: () -> Unit,
+    onSave: (UserProfileEntity) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var namaSalesman by remember { mutableStateOf(currentProfile?.namaSalesman ?: "") }
+    var noHp by remember { mutableStateOf(currentProfile?.noHp ?: "") }
+    var namaDistributor by remember { mutableStateOf(currentProfile?.namaDistributor ?: "") }
+    var alamatDepo by remember { mutableStateOf(currentProfile?.alamatDepo ?: "") }
+    var platNomorMobil by remember { mutableStateOf(currentProfile?.platNomorMobil ?: "") }
+    var areaRayon by remember { mutableStateOf(currentProfile?.areaOperasional ?: "") }
+    var pinKeamanan by remember { mutableStateOf(currentProfile?.pinKeamanan ?: "") }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(imageVector = Icons.Default.AccountCircle, contentDescription = null, tint = Slate900, modifier = Modifier.size(24.dp))
+                        Text(
+                            text = if (currentProfile == null) tr("Registrasi Akun Sales", "Sales Account Registration", lang) else tr("Profil & Identitas Sales", "Sales Profile & Identity", lang),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Text(
+                    text = tr("Identitas ini disimpan lokal di HP Anda dan otomatis dicetak pada kepala struk nota transaksi.", "This identity is stored locally on your device and automatically printed on the transaction receipt header.", lang),
+                    fontSize = 11.sp,
+                    color = Slate600
+                )
+
+                HorizontalDivider(color = Slate200)
+
+                OutlinedTextField(
+                    value = namaSalesman,
+                    onValueChange = { namaSalesman = it },
+                    label = { Text(tr("Nama Lengkap Salesman *", "Full Salesman Name *", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+
+                OutlinedTextField(
+                    value = noHp,
+                    onValueChange = { noHp = it },
+                    label = { Text(tr("Nomor WhatsApp / HP *", "WhatsApp / Phone Number *", lang)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+
+                OutlinedTextField(
+                    value = namaDistributor,
+                    onValueChange = { namaDistributor = it },
+                    label = { Text(tr("Nama Distributor / Agen / Usaha", "Distributor / Agency / Business Name", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    leadingIcon = { Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+
+                OutlinedTextField(
+                    value = alamatDepo,
+                    onValueChange = { alamatDepo = it },
+                    label = { Text(tr("Alamat Depo / Gudang", "Depot / Warehouse Address", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = platNomorMobil,
+                        onValueChange = { platNomorMobil = it },
+                        label = { Text(tr("Plat Nomor Mobil/Motor", "Vehicle License Plate", lang)) },
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    OutlinedTextField(
+                        value = areaRayon,
+                        onValueChange = { areaRayon = it },
+                        label = { Text(tr("Area / Rayon", "Area / Region", lang)) },
+                        colors = appTextFieldColors(),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = pinKeamanan,
+                    onValueChange = { pinKeamanan = it },
+                    label = { Text(tr("PIN Keamanan Utilitas (Opsional)", "Security PIN for Utilities (Optional)", lang)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    colors = appTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text(tr("Batal", "Cancel", lang))
+                    }
+                    Button(
+                        onClick = {
+                            if (namaSalesman.isNotBlank()) {
+                                onSave(
+                                    UserProfileEntity(
+                                        namaSalesman = namaSalesman.trim(),
+                                        noHp = noHp.trim(),
+                                        namaDistributor = namaDistributor.trim(),
+                                        alamatDepo = alamatDepo.trim(),
+                                        platNomorMobil = platNomorMobil.trim().uppercase(),
+                                        areaOperasional = areaRayon.trim(),
+                                        pinKeamanan = pinKeamanan.trim(),
+                                        isConfigured = true
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                    ) {
+                        Text(tr("Simpan Profil", "Save Profile", lang))
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+// 14. MANAGE CUSTOM PRICES PER TOKO DIALOG
+@Composable
+fun ManageCustomPricesDialog(
+    warung: WarungEntity,
+    products: List<ProductEntity>,
+    customPrices: List<WarungCustomPriceEntity>,
+    onDismiss: () -> Unit,
+    onSaveCustomPrice: (productId: String, customPrice: Double) -> Unit,
+    onDeleteCustomPrice: (productId: String) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+var editingProduct by remember { mutableStateOf<ProductEntity?>(null) }
+    var priceInput by remember { mutableStateOf("") }
+
+    val warungPrices = customPrices.filter { it.warungId == warung.id }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = tr("Harga Khusus Toko", "Store Special Prices", lang),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = warung.namaWarung,
+                            fontSize = 12.sp,
+                            color = Slate600
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Text(
+                    text = tr("Atur harga jual khusus untuk toko ini jika berbeda dari harga standar katalog.", "Set special selling prices for this store if different from standard catalog prices.", lang),
+                    fontSize = 11.sp,
+                    color = Slate600
+                )
+
+                HorizontalDivider(color = Slate200)
+
+                // Sub-dialog or inline editor for editing specific product price
+                if (editingProduct != null) {
+                    val p = editingProduct!!
+                    val currentCustom = warungPrices.find { it.productId == p.id }
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Slate100),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(tr("Atur Harga: ${p.nama}", "Set Price: ${p.nama}", lang), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(tr("Harga Katalog Standar: ${SfaViewModel.formatRupiah(p.hargaJualDefault)}/Pcs", "Standard Catalog Price: ${SfaViewModel.formatRupiah(p.hargaJualDefault)}/Pcs", lang), fontSize = 11.sp, color = Slate600)
+
+                            OutlinedTextField(
+                                value = priceInput,
+                                onValueChange = { priceInput = it },
+                                label = { Text(tr("Harga Khusus Toko (Rp/Pcs)", "Store Special Price (Rp/Pcs)", lang)) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = appTextFieldColors(),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (currentCustom != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onDeleteCustomPrice(p.id)
+                                            editingProduct = null
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseDanger),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(tr("Hapus Khusus", "Remove Special", lang), fontSize = 11.sp)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { editingProduct = null },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Batal", "Cancel", lang), fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val price = priceInput.toDoubleOrNull()
+                                        if (price != null && price > 0) {
+                                            onSaveCustomPrice(p.id, price)
+                                            editingProduct = null
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Simpan", "Save", lang), fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // List of Products and their custom price status
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    products.forEach { p ->
+                        val custom = warungPrices.find { it.productId == p.id }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (custom != null) EmeraldSurface else Slate50,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (custom != null) EmeraldBorder else Slate200),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(p.nama, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Slate900)
+                                    if (custom != null) {
+                                        Text(
+                                            tr("Harga Khusus: ${SfaViewModel.formatRupiah(custom.hargaJualPcs)}/Pcs (Standar: ${SfaViewModel.formatRupiah(p.hargaJualDefault)})", "Special Price: ${SfaViewModel.formatRupiah(custom.hargaJualPcs)}/Pcs (Standard: ${SfaViewModel.formatRupiah(p.hargaJualDefault)})", lang),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = EmeraldText
+                                        )
+                                    } else {
+                                        Text(
+                                            tr("Harga Standar: ${SfaViewModel.formatRupiah(p.hargaJualDefault)}/Pcs", "Standard Price: ${SfaViewModel.formatRupiah(p.hargaJualDefault)}/Pcs", lang),
+                                            fontSize = 11.sp,
+                                            color = Slate600
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        editingProduct = p
+                                        priceInput = (custom?.hargaJualPcs ?: p.hargaJualDefault).toLong().toString()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (custom != null) EmeraldSuccess else Slate900
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (custom != null) tr("Ubah", "Edit", lang) else tr("Set Khusus", "Set Custom", lang), fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(tr("Selesai", "Finish", lang))
+                }
+            }
+        }
+        }
+    }
+}
+
+// 15. EKSPOR BACKUP & MIGRASI HP DIALOG (ZIP + FOTO & JSON)
+@Composable
+fun ExportBackupDialog(
+    viewModel: SfaViewModel,
+    onDismiss: () -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val context = LocalContext.current
+    var selectedTab by remember { mutableStateOf(0) } // 0: Paket Migrasi HP (.ZIP), 1: Berkas JSON Modular
+    var copied by remember { mutableStateOf(false) }
+
+    // Modular Checkboxes
+    var exportProfile by remember { mutableStateOf(true) }
+    var exportProducts by remember { mutableStateOf(true) }
+    var exportWarungs by remember { mutableStateOf(true) }
+    var exportRutes by remember { mutableStateOf(true) }
+    var exportPabriks by remember { mutableStateOf(true) }
+    var exportCustomPrices by remember { mutableStateOf(true) }
+    var exportTransactions by remember { mutableStateOf(true) }
+    var exportInventory by remember { mutableStateOf(true) }
+    var exportPhotos by remember { mutableStateOf(true) }
+
+    var isGenerating by remember { mutableStateOf(false) }
+    var exportResult by remember { mutableStateOf<com.example.util.ExportResult?>(null) }
+    var zipResult by remember { mutableStateOf<com.example.util.ZipBackupResult?>(null) }
+    var feedbackMessage by remember { mutableStateOf<String?>(null) }
+
+    // SAF Document Creation Launchers
+    val createZipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let { targetUri ->
+            zipResult?.zipFile?.let { zipFile ->
+                viewModel.copyBackupToSaf(zipFile, targetUri) { success ->
+                    if (success) {
+                        feedbackMessage = "Paket Migrasi (.ZIP) berhasil disimpan ke folder HP Anda!"
+                    }
+                }
+            }
+        }
+    }
+
+    val createJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let { targetUri ->
+            exportResult?.file?.let { jsonFile ->
+                viewModel.copyBackupToSaf(jsonFile, targetUri) { success ->
+                    if (success) {
+                        feedbackMessage = "Berkas Cadangan (.JSON) berhasil disimpan ke folder HP Anda!"
+                    }
+                }
+            }
+        }
+    }
+
+    val generateZip = {
+        isGenerating = true
+        feedbackMessage = null
+        val selection = com.example.util.BackupSelection(
+            exportProfile = true,
+            exportProducts = true,
+            exportWarungs = true,
+            exportRutes = true,
+            exportPabriks = true,
+            exportCustomPrices = true,
+            exportTransactions = true,
+            exportInventory = true,
+            exportPhotos = exportPhotos
+        )
+        viewModel.exportZipBackup(selection) { result ->
+            zipResult = result
+            isGenerating = false
+        }
+    }
+
+    val generateJson = {
+        isGenerating = true
+        feedbackMessage = null
+        val selection = com.example.util.BackupSelection(
+            exportProfile = exportProfile,
+            exportProducts = exportProducts,
+            exportWarungs = exportWarungs,
+            exportRutes = exportRutes,
+            exportPabriks = exportPabriks,
+            exportCustomPrices = exportCustomPrices,
+            exportTransactions = exportTransactions,
+            exportInventory = exportInventory,
+            exportPhotos = false
+        )
+        viewModel.exportModularBackup(selection) { result ->
+            exportResult = result
+            isGenerating = false
+            copied = false
+        }
+    }
+
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 0 && zipResult == null) {
+            generateZip()
+        } else if (selectedTab == 1 && exportResult == null) {
+            generateJson()
+        }
+    }
+
+    LaunchedEffect(exportPhotos) {
+        if (selectedTab == 0) {
+            generateZip()
+        }
+    }
+
+    LaunchedEffect(exportProfile, exportProducts, exportWarungs, exportRutes, exportPabriks, exportCustomPrices, exportTransactions, exportInventory) {
+        if (selectedTab == 1) {
+            generateJson()
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White,
+                contentColor = Slate900
+            ),
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(24.dp))
+                        Text(
+                            text = tr("Ekspor Cadangan & Migrasi HP", "Backup Export & Phone Migration", lang),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                // Format Selector Tabs
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Slate100,
+                    contentColor = Slate900,
+                    indicator = { tabPositions ->
+                        if (selectedTab < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                                color = Slate900,
+                                height = 3.dp
+                            )
+                        }
+                    },
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        selectedContentColor = Slate900,
+                        unselectedContentColor = Slate600,
+                        text = {
+                            Text(
+                                tr("📦 Paket Migrasi (.ZIP)", "📦 Migration Package (.ZIP)", lang),
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTab == 0) Slate900 else Slate700
+                            )
+                        }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        selectedContentColor = Slate900,
+                        unselectedContentColor = Slate600,
+                        text = {
+                            Text(
+                                tr("📄 File Modular (.JSON)", "📄 Modular File (.JSON)", lang),
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTab == 1) Slate900 else Slate700
+                            )
+                        }
+                    )
+                }
+
+                if (feedbackMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EmeraldSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(18.dp))
+                            Text(feedbackMessage!!, fontSize = 11.sp, color = EmeraldText, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                if (selectedTab == 0) {
+                    // --- TAB 1: PAKET MIGRASI HP (.ZIP) ---
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Slate50,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(EmeraldSurface),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.FolderZip, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(18.dp))
+                                }
+                                Column {
+                                    Text(tr("Paket Lengkap Pindah HP", "Full Migration Package", lang), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Slate900)
+                                    Text(tr("Seluruh database & foto toko dikemas utuh", "Full database & store photos bundled", lang), fontSize = 10.sp, color = Slate600)
+                                }
+                            }
+
+                            HorizontalDivider(color = Slate200)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportPhotos = !exportPhotos }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportPhotos, onCheckedChange = { exportPhotos = it })
+                                Column {
+                                    Text(tr("Sertakan Semua Foto Outlet / Toko", "Include All Outlet / Store Photos", lang), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                                    Text(tr("Foto akan otomatis diekstrak saat dipulihkan di HP baru", "Photos will be automatically extracted on new device", lang), fontSize = 10.sp, color = Slate500)
+                                }
+                            }
+
+                            if (zipResult != null && !isGenerating) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(tr("Nama File:", "File Name:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(zipResult!!.fileName, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(tr("Ukuran Paket:", "Package Size:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(zipResult!!.fileSizeFormatted, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EmeraldSuccess)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(tr("Jumlah Foto Toko:", "Store Photos Count:", lang), fontSize = 11.sp, color = Slate600)
+                                            Text(tr("${zipResult!!.photoCount} Foto", "${zipResult!!.photoCount} Photos", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate900)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (isGenerating) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Slate900)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(tr("Mengompres database & foto ke format .ZIP...", "Compressing database & photos to .ZIP format...", lang), fontSize = 11.sp, color = Slate700)
+                        }
+                    } else if (zipResult != null) {
+                        // Actions for ZIP
+                        Button(
+                            onClick = {
+                                createZipLauncher.launch(zipResult!!.fileName)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(tr("Simpan Berkas .ZIP ke HP (Download)", "Save .ZIP File to Phone (Download)", lang), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                com.example.util.BackupRestoreHelper.shareBackupFile(
+                                    context = context,
+                                    file = zipResult!!.zipFile,
+                                    mimeType = "application/zip",
+                                    chooserTitle = tr("Kirim Paket Migrasi HP SFA (.ZIP)", "Send SFA Phone Migration Package (.ZIP)", lang)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldSuccess),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(tr("Kirim Berkas .ZIP (WhatsApp / Drive / Share)", "Send .ZIP File (WhatsApp / Drive / Share)", lang), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    // --- TAB 2: BERKAS CADANGAN JSON MODULAR ---
+                    Text(
+                        text = tr("Pilih entitas data yang ingin disertakan ke file cadangan JSON:", "Select data entities to include in the JSON backup file:", lang),
+                        fontSize = 11.sp,
+                        color = Slate600
+                    )
+
+                    // Presets
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = exportWarungs && exportProducts && exportPabriks && exportRutes && exportTransactions && exportProfile,
+                            onClick = {
+                                exportProfile = true
+                                exportProducts = true
+                                exportWarungs = true
+                                exportRutes = true
+                                exportPabriks = true
+                                exportCustomPrices = true
+                                exportTransactions = true
+                                exportInventory = true
+                            },
+                            label = { Text(tr("Semua Data", "All Data", lang), fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White, containerColor = Slate100, labelColor = Slate700),
+                            border = null
+                        )
+
+                        FilterChip(
+                            selected = exportWarungs && !exportProducts && !exportPabriks && !exportTransactions,
+                            onClick = {
+                                exportWarungs = true
+                                exportRutes = true
+                                exportCustomPrices = true
+                                exportProducts = false
+                                exportPabriks = false
+                                exportTransactions = false
+                                exportInventory = false
+                                exportProfile = false
+                            },
+                            label = { Text(tr("Hanya Outlet & GPS", "Outlets & GPS Only", lang), fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White, containerColor = Slate100, labelColor = Slate700),
+                            border = null
+                        )
+
+                        FilterChip(
+                            selected = !exportWarungs && exportProducts && exportPabriks && !exportTransactions,
+                            onClick = {
+                                exportWarungs = false
+                                exportRutes = false
+                                exportCustomPrices = false
+                                exportProducts = true
+                                exportPabriks = true
+                                exportTransactions = false
+                                exportInventory = false
+                                exportProfile = false
+                            },
+                            label = { Text(tr("Produk & Pabrik", "Products & Factories", lang), fontSize = 11.sp) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White, containerColor = Slate100, labelColor = Slate700),
+                            border = null
+                        )
+                    }
+
+                    // Checkboxes
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Slate50,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportWarungs = !exportWarungs }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportWarungs, onCheckedChange = { exportWarungs = it })
+                                Text(tr("Data Master Outlet / Warung & GPS", "Outlet Master Data & GPS", lang), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportProducts = !exportProducts }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportProducts, onCheckedChange = { exportProducts = it })
+                                Text(tr("Data Master Produk & Rasio Konversi", "Product Master Data & Conversion", lang), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportPabriks = !exportPabriks }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportPabriks, onCheckedChange = { exportPabriks = it })
+                                Text(tr("Data Supplier & Pabrik", "Supplier & Factory Data", lang), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportRutes = !exportRutes }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportRutes, onCheckedChange = { exportRutes = it })
+                                Text(tr("Data Rute / Jalur Kunjungan", "Visit Route Master Data", lang), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportTransactions = !exportTransactions }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportTransactions, onCheckedChange = { exportTransactions = it })
+                                Text(tr("Riwayat Transaksi Harian", "Daily Transaction History", lang), fontSize = 11.sp, color = Slate700)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportInventory = !exportInventory }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = exportInventory, onCheckedChange = { exportInventory = it })
+                                Text(tr("Laci Stok Mobil & Kiriman Stok", "Vehicle Stock Drawer & Stock Shipments", lang), fontSize = 11.sp, color = Slate700)
+                            }
+                        }
+                    }
+
+                    if (exportResult != null) {
+                        Text(
+                            text = exportResult!!.summary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldText
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Slate900,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 100.dp)
+                        ) {
+                            Text(
+                                text = exportResult!!.jsonString,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = Color(0xFFE2E8F0),
+                                modifier = Modifier
+                                    .padding(10.dp)
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
+
+                        // JSON Action Buttons
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                onClick = {
+                                    createJsonLauncher.launch(exportResult!!.fileName)
+                                },
+                                modifier = Modifier.weight(1.2f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(tr("Simpan .JSON", "Save .JSON", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    exportResult?.file?.let { f ->
+                                        com.example.util.BackupRestoreHelper.shareBackupFile(
+                                            context = context,
+                                            file = f,
+                                            mimeType = "application/json",
+                                            chooserTitle = tr("Bagikan Berkas Cadangan JSON", "Share JSON Backup File", lang)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.weight(1.1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldSuccess),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(tr("Kirim File", "Send File", lang), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    val clip = android.content.ClipData.newPlainText(tr("SFA_BACKUP", "SFA_BACKUP", lang), exportResult!!.jsonString)
+                                    clipboard.setPrimaryClip(clip)
+                                    copied = true
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = if (copied) EmeraldSuccess else Slate800),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(if (copied) Icons.Default.Check else Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (copied) tr("Tersalin", "Copied", lang) else tr("Salin Teks", "Copy Text", lang), fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(tr("Tutup", "Close", lang))
+                }
+            }
+        }
+    }
+}
+
+// 16. IMPOR & PULIHKAN CADANGAN DIALOG (ZIP + FOTO & JSON)
+@Composable
+fun ImportBackupDialog(
+    viewModel: SfaViewModel,
+    onDismiss: () -> Unit
+) {
+    val lang = LocalAppLanguage.current
+
+val context = LocalContext.current
+    var jsonInput by remember { mutableStateOf("") }
+    var isProcessing by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var successMessage by remember { mutableStateOf<String?>(null) }
+
+    // User Selections for Import
+    var importWarungs by remember { mutableStateOf(true) }
+    var importProducts by remember { mutableStateOf(true) }
+    var importPabriks by remember { mutableStateOf(true) }
+    var importRutes by remember { mutableStateOf(true) }
+    var importProfile by remember { mutableStateOf(true) }
+    var importTransactions by remember { mutableStateOf(true) }
+    var importCustomPrices by remember { mutableStateOf(true) }
+    var importInventory by remember { mutableStateOf(true) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { pickedUri ->
+            isProcessing = true
+            errorMessage = null
+            successMessage = null
+
+            val selection = com.example.util.BackupSelection(
+                exportProfile = importProfile,
+                exportProducts = importProducts,
+                exportWarungs = importWarungs,
+                exportRutes = importRutes,
+                exportPabriks = importPabriks,
+                exportCustomPrices = importCustomPrices,
+                exportTransactions = importTransactions,
+                exportInventory = importInventory,
+                exportPhotos = true
+            )
+
+            viewModel.importBackupFromUri(pickedUri, selection) { result ->
+                isProcessing = false
+                if (result.success) {
+                    successMessage = result.message
+                } else {
+                    errorMessage = result.message
+                }
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = Slate900
+                ),
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .padding(vertical = 8.dp)
+            ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(24.dp))
+                        Text(
+                            text = tr("Pulihkan Cadangan (Restore)", "Restore Backup", lang),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = tr("Tutup", "Close", lang), tint = Slate500, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Text(
+                    text = tr(
+                        "Pilih berkas cadangan (.ZIP paket lengkap atau .JSON) yang didapat dari HP lama atau backup sebelumnya:",
+                        "Select a backup file (.ZIP complete package or .JSON) from a previous device or backup:",
+                        lang
+                    ),
+                    fontSize = 11.sp,
+                    color = Slate600
+                )
+
+                // Main Action Button for ZIP / JSON File Selection
+                Button(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                    shape = RoundedCornerShape(10.dp),
+                    enabled = !isProcessing
+                ) {
+                    if (isProcessing) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(tr("Mengekstrak Foto & Memulihkan...", "Extracting Photos & Restoring...", lang), fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(tr("Pilih Berkas .ZIP / .JSON dari HP", "Select .ZIP / .JSON File from Phone", lang), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (successMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EmeraldSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldSuccess, modifier = Modifier.size(18.dp))
+                                Text(tr("Pemulihan Berhasil!", "Restoration Successful!", lang), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = EmeraldText)
+                            }
+                            Text(successMessage!!, fontSize = 11.sp, color = Slate700)
+                        }
+                    }
+                }
+
+                if (errorMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = RoseSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, RoseBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = RoseDanger, modifier = Modifier.size(18.dp))
+                            Text(errorMessage!!, fontSize = 11.sp, color = RoseDanger, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                // Optional Module Filter
+                Text(tr("Opsi Kategori yang Dipulihkan:", "Restored Category Options:", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate800)
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { importWarungs = !importWarungs },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importWarungs, onCheckedChange = { importWarungs = it })
+                        Text(tr("Outlet / Warung & Titik GPS", "Outlets & GPS Points", lang), fontSize = 11.sp, color = Slate800)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { importProducts = !importProducts },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importProducts, onCheckedChange = { importProducts = it })
+                        Text(tr("Master Produk & Harga Satuan", "Product Master & Unit Price", lang), fontSize = 11.sp, color = Slate800)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { importRutes = !importRutes },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importRutes, onCheckedChange = { importRutes = it })
+                        Text(tr("Daftar Rute Harian", "Daily Route List", lang), fontSize = 11.sp, color = Slate800)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { importPabriks = !importPabriks },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importPabriks, onCheckedChange = { importPabriks = it })
+                        Text(tr("Data Pabrik & Supplier", "Factory & Supplier Data", lang), fontSize = 11.sp, color = Slate800)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { importTransactions = !importTransactions },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = importTransactions, onCheckedChange = { importTransactions = it })
+                        Text(tr("Riwayat Kunjungan & Transaksi", "Visit & Transaction History", lang), fontSize = 11.sp, color = Slate800)
+                    }
+                }
+
+                HorizontalDivider(color = Slate200)
+
+                OutlinedTextField(
+                    value = jsonInput,
+                    onValueChange = {
+                        jsonInput = it
+                        errorMessage = null
+                    },
+                    label = { Text(tr("Atau Tempel (Paste) Teks JSON Cadangan", "Or Paste JSON Backup Text", lang)) },
+                    colors = appTextFieldColors(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 80.dp, max = 130.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                )
+
+                if (jsonInput.isNotBlank()) {
+                    Button(
+                        onClick = {
+                            val selection = com.example.util.BackupSelection(
+                                exportProfile = importProfile,
+                                exportProducts = importProducts,
+                                exportWarungs = importWarungs,
+                                exportRutes = importRutes,
+                                exportPabriks = importPabriks,
+                                exportCustomPrices = importCustomPrices,
+                                exportTransactions = importTransactions,
+                                exportInventory = importInventory
+                            )
+                            viewModel.importModularBackup(jsonInput.trim(), selection) {
+                                successMessage = tr("Data JSON berhasil dipulihkan!", "JSON data restored successfully!", lang)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(tr("Impor Teks JSON", "Import JSON Text", lang), fontSize = 11.sp)
+                    }
+                }
+
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text(tr("Tutup", "Close", lang))
+                }
+            }
+        }
+        }
+    }
+}
