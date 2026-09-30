@@ -672,15 +672,27 @@ fun RiwayatScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(top = 12.dp, bottom = 80.dp)
             ) {
-                items(finalHistoryList, key = { item ->
-                    when (item) {
-                        is HistoryItem.VisitTransaction -> "tx_${item.entity.id}"
-                        is HistoryItem.StockLoading -> "load_${item.entity.id}"
-                        is HistoryItem.DailyClosing -> "close_${item.date}"
-                        is HistoryItem.BsSortir -> "bs_${item.entity.id}"
-                        is HistoryItem.WriteOff -> "wo_${item.entity.id}"
+                items(
+                    finalHistoryList,
+                    key = { item ->
+                        when (item) {
+                            is HistoryItem.VisitTransaction -> "tx_${item.entity.id}"
+                            is HistoryItem.StockLoading -> "load_${item.entity.id}"
+                            is HistoryItem.DailyClosing -> "close_${item.date}"
+                            is HistoryItem.BsSortir -> "bs_${item.entity.id}"
+                            is HistoryItem.WriteOff -> "wo_${item.entity.id}"
+                        }
+                    },
+                    contentType = { item ->
+                        when (item) {
+                            is HistoryItem.VisitTransaction -> "visit_tx"
+                            is HistoryItem.StockLoading -> "stock_loading"
+                            is HistoryItem.DailyClosing -> "daily_closing"
+                            is HistoryItem.BsSortir -> "bs_sortir"
+                            is HistoryItem.WriteOff -> "write_off"
+                        }
                     }
-                }) { item ->
+                ) { item ->
                     HistoryCard(
                         item = item,
                         lang = lang,

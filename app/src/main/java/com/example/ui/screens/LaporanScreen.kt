@@ -47,6 +47,7 @@ fun LaporanScreen(
     val scope = rememberCoroutineScope()
 
     val drawers by viewModel.drawers.collectAsState()
+    val drawersByProduct = remember(drawers) { drawers.associateBy { it.productId } }
     val products by viewModel.products.collectAsState()
     val warungs by viewModel.warungs.collectAsState()
     val pabriks by viewModel.pabriks.collectAsState()
@@ -438,6 +439,10 @@ fun LaporanScreen(
 
         HorizontalDivider(color = Slate200, thickness = 1.dp)
 
+        // Precomputed O(1) lookup maps to eliminate linear scans during 120Hz scrolling
+        val productsById = remember(products) { products.associateBy { it.id } }
+        val pabriksById = remember(pabriks) { pabriks.associateBy { it.id } }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -520,7 +525,7 @@ fun LaporanScreen(
                         }
                     } else {
                         itemsIndexed(reportProducts, key = { _, it -> it.id }, contentType = { _, _ -> "report_product" }) { index, product ->
-                            val drawer = drawers.find { it.productId == product.id }
+                            val drawer = drawersByProduct[product.id]
                             LaciStokProductCard(product = product, drawer = drawer, orderNumber = index + 1, lang = lang)
                         }
                     }
@@ -627,7 +632,7 @@ fun LaporanScreen(
                                     }
 
                                     weeklyShipments.take(5).forEach { ship ->
-                                        val prod = products.find { it.id == ship.productId }
+                                        val prod = productsById[ship.productId]
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -675,8 +680,8 @@ fun LaporanScreen(
                     }
 
                     itemsIndexed(dailyLoadings, key = { _, it -> it.id }, contentType = { _, _ -> "report_loading" }) { index, loading ->
-                        val product = products.find { it.id == loading.productId }
-                        val matchedPabrik = pabriks.find { it.id == product?.pabrikId }
+                        val product = productsById[loading.productId]
+                        val matchedPabrik = pabriksById[product?.pabrikId]
                         DailyLoadingItemCard(
                             loading = loading,
                             orderNumber = index + 1,

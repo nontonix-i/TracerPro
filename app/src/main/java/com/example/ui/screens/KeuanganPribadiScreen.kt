@@ -278,6 +278,8 @@ private fun KeuanganOverviewTab(
     activeDebts: List<PersonalDebtEntity>,
     onNavigateTab: (KeuanganSubTab) -> Unit
 ) {
+    val accountsById = remember(accounts) { accounts.associateBy { it.id } }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -760,7 +762,8 @@ private fun KeuanganOverviewTab(
                         recentExpenses.forEach { exp ->
                             ExpenseRowItem(
                                 expense = exp,
-                                accounts = accounts,
+                                account = accountsById[exp.accountId],
+                                toAccount = accountsById[exp.toAccountId],
                                 lang = lang,
                                 onDelete = { viewModel.deletePersonalExpense(exp) }
                             )
@@ -794,6 +797,7 @@ private fun KeuanganPengeluaranTab(
             matchJenis && matchQuery
         }
     }
+    val accountsById = remember(accounts) { accounts.associateBy { it.id } }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -893,10 +897,11 @@ private fun KeuanganPengeluaranTab(
                 }
             }
         } else {
-            items(filteredExpenses, key = { it.id }) { expense ->
+            items(filteredExpenses, key = { it.id }, contentType = { "expense_item" }) { expense ->
                 ExpenseRowItem(
                     expense = expense,
-                    accounts = accounts,
+                    account = accountsById[expense.accountId],
+                    toAccount = accountsById[expense.toAccountId],
                     lang = lang,
                     onDelete = { viewModel.deletePersonalExpense(expense) }
                 )
@@ -908,12 +913,11 @@ private fun KeuanganPengeluaranTab(
 @Composable
 private fun ExpenseRowItem(
     expense: PersonalExpenseEntity,
-    accounts: List<PersonalAccountEntity>,
+    account: PersonalAccountEntity?,
+    toAccount: PersonalAccountEntity?,
     lang: String,
     onDelete: () -> Unit
 ) {
-    val account = accounts.find { it.id == expense.accountId }
-    val toAccount = accounts.find { it.id == expense.toAccountId }
     val isOut = expense.jenis == "PENGELUARAN"
     val isIn = expense.jenis == "PEMASUKAN"
 
@@ -1155,7 +1159,7 @@ private fun KeuanganHutangTab(
                 }
             }
         } else {
-            items(filteredDebts, key = { it.id }) { debt ->
+            items(filteredDebts, key = { it.id }, contentType = { "debt_item" }) { debt ->
                 DebtCardItem(
                     debt = debt,
                     lang = lang,
@@ -1439,7 +1443,7 @@ private fun KeuanganDompetTab(
                 }
             }
         } else {
-            items(standardAccounts, key = { it.id }) { acc ->
+            items(standardAccounts, key = { it.id }, contentType = { "standard_account" }) { acc ->
                 AccountCardItem(
                     account = acc,
                     lang = lang,
@@ -1490,7 +1494,7 @@ private fun KeuanganDompetTab(
                 }
             }
         } else {
-            items(paylaterAccounts, key = { it.id }) { acc ->
+            items(paylaterAccounts, key = { it.id }, contentType = { "paylater_account" }) { acc ->
                 AccountCardItem(
                     account = acc,
                     lang = lang,

@@ -188,7 +188,7 @@ fun DashboardScreen(
             contentPadding = PaddingValues(top = 14.dp, bottom = 80.dp)
         ) {
             // 1. AI Copilot Card (Simple & Modern)
-            item {
+            item(key = "ai_copilot", contentType = "ai_card") {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -265,7 +265,7 @@ fun DashboardScreen(
             }
 
             // 2. Quick Actions (Aksi Cepat Lapangan)
-            item {
+            item(key = "quick_actions", contentType = "actions_row") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = com.example.util.AppStrings.tr("AKSI OPERASIONAL", "OPERATIONAL ACTIONS", lang),
@@ -319,7 +319,7 @@ fun DashboardScreen(
             }
 
             // 3. Performance Summary Chart
-            item {
+            item(key = "summary_chart", contentType = "chart") {
                 DashboardSummaryChart(
                     todayTransactions = todayTx,
                     totalWarungsInRoute = warungs.size,
@@ -329,7 +329,7 @@ fun DashboardScreen(
             }
 
             // 4. Inventory Drawers
-            item {
+            item(key = "inventory_drawers", contentType = "drawers") {
                 DrawerInventorySummary(
                     stokPoolGudang = totalPoolGudang,
                     stokFresh = totalFresh,
@@ -345,7 +345,7 @@ fun DashboardScreen(
             }
 
             // 5. Key Financial Metrics
-            item {
+            item(key = "financial_metrics", contentType = "metrics") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = com.example.util.AppStrings.tr("RINGKASAN FINANSIAL", "FINANCIAL SUMMARY", lang),
@@ -407,7 +407,7 @@ fun DashboardScreen(
             }
 
             // 6. Personal Finance Card
-            item {
+            item(key = "personal_finance", contentType = "personal_finance") {
                 val totalKasPribadi = remember(personalAccounts) {
                     personalAccounts.filter { !it.isPaylater }.sumOf { it.saldo }
                 }
@@ -425,7 +425,7 @@ fun DashboardScreen(
                         .testTag("dashboard_personal_finance_card"),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Slate200)
+                    border = SlateBorderStroke
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -518,7 +518,7 @@ fun DashboardScreen(
             }
 
             // 7. Active Route Progress
-            item {
+            item(key = "active_route", contentType = "route_card") {
                 val todayRute = remember(rutes) { SfaViewModel.findRuteForToday(rutes) }
                 val activeRute = todayRute ?: rutes.firstOrNull()
                 Card(
@@ -532,7 +532,7 @@ fun DashboardScreen(
                         },
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Slate200)
+                    border = SlateBorderStroke
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),

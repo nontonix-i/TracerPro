@@ -146,6 +146,9 @@ fun AppDialogsHost(
                         gpsAddress = addr,
                         catatan = note
                     )
+                },
+                onSwitchToTarikSisa = {
+                    viewModel.openTransactionDialog(TransactionDialogState.TarikSisa(currentWarung))
                 }
             )
         }
@@ -187,6 +190,9 @@ fun AppDialogsHost(
                         gpsAddress = addr,
                         catatan = note
                     )
+                },
+                onSwitchToTitipBaru = {
+                    viewModel.openTransactionDialog(TransactionDialogState.TitipBaru(currentWarung))
                 }
             )
         }
@@ -227,7 +233,11 @@ fun AppDialogsHost(
                 warung = state.warung,
                 rutes = rutes,
                 onDismiss = { viewModel.closeTransactionDialog() },
-                onSave = { viewModel.addOrUpdateWarung(it) }
+                onSave = { viewModel.addOrUpdateWarung(it) },
+                onSaveAndOpenTarikSisa = { newWarung ->
+                    viewModel.addOrUpdateWarung(newWarung)
+                    viewModel.openTransactionDialog(TransactionDialogState.TarikSisa(newWarung))
+                }
             )
         }
         is TransactionDialogState.AddEditRute -> {
@@ -1189,7 +1199,8 @@ fun TitipBaruDialog(
     customPrices: List<WarungCustomPriceEntity> = emptyList(),
     onDismiss: () -> Unit,
     onSubmit: (productId: String, sumberStok: String, jumlahPcs: Int, hargaSatuan: Double, gpsLat: Double, gpsLng: Double, gpsAddr: String, catatan: String) -> Unit,
-    onBatchSubmit: ((items: List<BatchTitipItem>, gpsLat: Double, gpsLng: Double, gpsAddr: String, catatan: String) -> Unit)? = null
+    onBatchSubmit: ((items: List<BatchTitipItem>, gpsLat: Double, gpsLng: Double, gpsAddr: String, catatan: String) -> Unit)? = null,
+    onSwitchToTarikSisa: (() -> Unit)? = null
 ) {
     val lang = LocalAppLanguage.current
 
@@ -1306,6 +1317,42 @@ fun TitipBaruDialog(
                     }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = Slate500)
+                    }
+                }
+
+                // Quick Bypass Shortcut Banner (Jika outlet baru sudah pernah dititip sebelumnya)
+                if (onSwitchToTarikSisa != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFEFF6FF),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = Color(0xFF2563EB), modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = tr("Sudah pernah dititip sebelumnya? Bisa langsung ganti barang:", "Already consigned before? Go straight to replace:", lang),
+                                    fontSize = 10.sp,
+                                    color = Slate700
+                                )
+                            }
+                            TextButton(
+                                onClick = onSwitchToTarikSisa,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(tr("Bypass ke Tarik / Ganti ➜", "Bypass to Replace ➜", lang), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB))
+                            }
+                        }
                     }
                 }
 
@@ -1736,14 +1783,18 @@ fun TarikSisaDialog(
     customPrices: List<WarungCustomPriceEntity> = emptyList(),
     onDismiss: () -> Unit,
     onSubmit: (productId: String, sisaLalu: Int, sisaFisik: Int, harga: Double, bayar: Double, restock: Int, sumberRestock: String, lat: Double, lng: Double, addr: String, note: String, tarikLayak: Int, tarikBs: Int) -> Unit,
-    onBatchSubmit: ((items: List<BatchTarikSisaItem>, uangDiterima: Double, lat: Double, lng: Double, addr: String, note: String) -> Unit)? = null
+    onBatchSubmit: ((items: List<BatchTarikSisaItem>, uangDiterima: Double, lat: Double, lng: Double, addr: String, note: String) -> Unit)? = null,
+    onSwitchToTitipBaru: (() -> Unit)? = null
 ) {
     val lang = LocalAppLanguage.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     // Deteksi titipan lalu per produk dari riwayat transaksi
     val warungProductTxs = remember(warung.id, transactions) {
         transactions.filter { it.warungId == warung.id }
     }
+    val hasPriorTx = remember(warungProductTxs) { warungProductTxs.isNotEmpty() }
+    val isBypassMode = !hasPriorTx
 
     fun getLastTitipanForProduct(pId: String): Int {
         val tx = warungProductTxs.filter { it.productId == pId }.maxByOrNull { it.timestamp }
@@ -1764,7 +1815,7 @@ fun TarikSisaDialog(
     var bayarInitialized by remember { mutableStateOf(false) }
     var catatanTransaksi by remember { mutableStateOf(warung.notes) }
     var searchQuery by remember { mutableStateOf("") }
-    var activeTab by remember { mutableStateOf(0) } // 0 = SKU Titipan Aktif Toko, 1 = Semua SKU / Tambah Restock
+    var activeTab by remember { mutableStateOf(if (isBypassMode) 1 else 0) } // 0 = SKU Titipan Aktif Toko, 1 = Semua SKU / Tambah Restock
 
     // Inisialisasi awal titipan lalu per produk
     LaunchedEffect(products, warung.id) {
@@ -1913,6 +1964,64 @@ fun TarikSisaDialog(
                     }
                 }
 
+                // Bypass Mode Banner for New Outlets
+                if (isBypassMode) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFEFF6FF),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF2563EB)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = tr("Mode Bypass Titip Baru Aktif", "New Outlet Bypass Mode Active", lang),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E40AF)
+                                    )
+                                    Text(
+                                        text = tr(
+                                            "Outlet baru: langsung isi 'Titip Lalu' & 'Sisa Fisik'. Riwayat Titip Awal akan otomatis dibuat di sistem.",
+                                            "New outlet: fill in 'Prev Drop' & 'Current Stock'. Initial drop record will be automatically created in history.",
+                                            lang
+                                        ),
+                                        fontSize = 10.sp,
+                                        color = Slate600
+                                    )
+                                }
+                            }
+                            if (onSwitchToTitipBaru != null) {
+                                TextButton(
+                                    onClick = onSwitchToTitipBaru,
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text(tr("Titip Biasa", "Regular Drop", lang), fontSize = 10.sp, color = Slate600)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Tabs: SKU Toko vs Semua SKU
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -2038,6 +2147,88 @@ fun TarikSisaDialog(
                                         singleLine = true,
                                         textStyle = LocalTextStyle.current.copy(fontSize = 11.sp)
                                     )
+                                }
+
+                                if (isBypassMode || sisaLalu == 0) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(tr("Set Titip Lalu:", "Set Prev Drop:", lang), fontSize = 9.sp, color = Slate500)
+                                        if (rasio > 1) {
+                                            SuggestionChip(
+                                                onClick = {
+                                                    val cur = sisaLaluInputs[pId]?.toIntOrNull() ?: 0
+                                                    sisaLaluInputs[pId] = (cur + rasio).toString()
+                                                },
+                                                label = { Text("+1 $satuanBesar ($rasio)", fontSize = 8.sp, fontWeight = FontWeight.Bold) },
+                                                modifier = Modifier.height(22.dp)
+                                            )
+                                            SuggestionChip(
+                                                onClick = {
+                                                    val cur = sisaLaluInputs[pId]?.toIntOrNull() ?: 0
+                                                    sisaLaluInputs[pId] = (cur + (rasio * 2)).toString()
+                                                },
+                                                label = { Text("+2 $satuanBesar", fontSize = 8.sp) },
+                                                modifier = Modifier.height(22.dp)
+                                            )
+                                        }
+                                        SuggestionChip(
+                                            onClick = {
+                                                val cur = sisaLaluInputs[pId]?.toIntOrNull() ?: 0
+                                                sisaLaluInputs[pId] = (cur + 5).toString()
+                                            },
+                                            label = { Text("+5 $satuanKecil", fontSize = 8.sp) },
+                                            modifier = Modifier.height(22.dp)
+                                        )
+                                        if ((sisaLaluInputs[pId]?.toIntOrNull() ?: 0) > 0) {
+                                            SuggestionChip(
+                                                onClick = { sisaLaluInputs[pId] = "0" },
+                                                label = { Text("0", fontSize = 8.sp, color = RoseCritical) },
+                                                modifier = Modifier.height(22.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Quick Preset Chips for Sisa Fisik (Mempercepat Input Lapangan)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(tr("Set Fisik:", "Set Actual:", lang), fontSize = 9.sp, color = Slate500)
+                                    SuggestionChip(
+                                        onClick = {
+                                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                            sisaFisikInputs[pId] = "0"
+                                        },
+                                        label = { Text("Habis (0)", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = EmeraldSuccess) },
+                                        modifier = Modifier.height(22.dp)
+                                    )
+                                    if (rasio > 1 && sisaLalu >= rasio) {
+                                        SuggestionChip(
+                                            onClick = {
+                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                                sisaFisikInputs[pId] = rasio.toString()
+                                            },
+                                            label = { Text("1 $satuanBesar ($rasio)", fontSize = 8.sp) },
+                                            modifier = Modifier.height(22.dp)
+                                        )
+                                    }
+                                    listOf(1, 2, 5, 10).filter { it < sisaLalu || sisaLalu == 0 }.forEach { pcs ->
+                                        SuggestionChip(
+                                            onClick = {
+                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                                sisaFisikInputs[pId] = pcs.toString()
+                                            },
+                                            label = { Text("$pcs $satuanKecil", fontSize = 8.sp) },
+                                            modifier = Modifier.height(22.dp)
+                                        )
+                                    }
                                 }
 
                                 // Terjual Subtotal Badge
@@ -2228,6 +2419,7 @@ fun TarikSisaDialog(
                     }
                     Button(
                         onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             val itemsToProcess = products.mapNotNull { p ->
                                 val lalu = getSisaLalu(p)
                                 val fisik = getSisaFisik(p)
@@ -2797,7 +2989,7 @@ val today = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale
                         modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(remainingProducts) { p ->
+                        items(remainingProducts, key = { it.id }, contentType = { "closing_sku_candidate" }) { p ->
                             Card(
                                 shape = RoundedCornerShape(8.dp),
                                 colors = CardDefaults.cardColors(containerColor = Slate100),
@@ -4122,11 +4314,12 @@ fun AddEditWarungDialog(
     warung: WarungEntity?,
     rutes: List<RuteEntity>,
     onDismiss: () -> Unit,
-    onSave: (WarungEntity) -> Unit
+    onSave: (WarungEntity) -> Unit,
+    onSaveAndOpenTarikSisa: ((WarungEntity) -> Unit)? = null
 ) {
     val lang = LocalAppLanguage.current
 
-val context = LocalContext.current
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     var namaWarung by remember { mutableStateOf(warung?.namaWarung ?: "") }
@@ -4136,6 +4329,8 @@ val context = LocalContext.current
     var alamat by remember { mutableStateOf(warung?.alamatLengkap ?: "") }
     var notes by remember { mutableStateOf(warung?.notes ?: "") }
     var limitHutang by remember { mutableStateOf("${warung?.limitHutangMaksimal?.toLong() ?: 500000}") }
+    var isPernahDititip by remember { mutableStateOf(warung != null && warung.stokTitipanPcs > 0) }
+    var stokTitipanAwalInput by remember { mutableStateOf(if ((warung?.stokTitipanPcs ?: 0) > 0) "${warung?.stokTitipanPcs}" else "") }
     val todayRute = remember(rutes) {
         SfaViewModel.findRuteForToday(rutes)
     }
@@ -4931,24 +5126,116 @@ val context = LocalContext.current
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        shape = RoundedCornerShape(10.dp)
+                // Bypass Mode Section: Warung Sudah Pernah Dititip Sebelumnya
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isPernahDititip) Color(0xFFEFF6FF) else Slate100.copy(alpha = 0.6f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isPernahDititip) Color(0xFF93C5FD) else Slate200),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(tr("Batal", "Cancel", lang), fontWeight = FontWeight.SemiBold)
-                    }
-                    Button(
-                        onClick = {
-                            if (namaWarung.isNotBlank()) {
-                                val resolvedRuteId = if (ruteId.isNotBlank() && rutes.any { it.id == ruteId }) {
-                                    ruteId
-                                } else {
-                                    todayRute?.id ?: rutes.firstOrNull()?.id ?: "RUTE-01"
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isPernahDititip) Color(0xFF2563EB) else Slate400),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bolt,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
-                                onSave(
-                                    warung?.copy(
+                                Column {
+                                    Text(
+                                        text = tr("Sudah Pernah Dititip (Bypass Titip Baru)", "Already Consigned (Bypass New Drop)", lang),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isPernahDititip) Color(0xFF1E40AF) else Slate800
+                                    )
+                                    Text(
+                                        text = tr(
+                                            "Aktifkan jika warung ini sudah memiliki titipan barang sebelumnya. Anda bisa langsung Ganti / Tarik Sisa tanpa harus Titip Baru dulu.",
+                                            "Enable if store already has goods consignment. You can immediately Replace / Pull Stock without initial drop.",
+                                            lang
+                                        ),
+                                        fontSize = 10.sp,
+                                        color = Slate600
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = isPernahDititip,
+                                onCheckedChange = { isPernahDititip = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF2563EB)
+                                )
+                            )
+                        }
+
+                        if (isPernahDititip) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                OutlinedTextField(
+                                    value = stokTitipanAwalInput,
+                                    onValueChange = { stokTitipanAwalInput = it.filter { ch -> ch.isDigit() } },
+                                    label = { Text(tr("Estimasi Stok Titipan Awal di Warung (Pcs Opsional)", "Estimated Initial Consigned Stock (Pcs Optional)", lang), fontSize = 11.sp) },
+                                    placeholder = { Text(tr("Contoh: 50 (bisa diatur saat transaksi)", "Example: 50 (can be adjusted during visit)", lang), fontSize = 11.sp) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    colors = appTextFieldColors(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(10, 20, 30, 50, 100).forEach { pcs ->
+                                        SuggestionChip(
+                                            onClick = { stokTitipanAwalInput = pcs.toString() },
+                                            label = { Text("+$pcs Pcs", fontSize = 10.sp) },
+                                            modifier = Modifier.height(26.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Tombol Aksi Simpan
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onSaveAndOpenTarikSisa != null) {
+                        Button(
+                            onClick = {
+                                if (namaWarung.isNotBlank()) {
+                                    val resolvedRuteId = if (ruteId.isNotBlank() && rutes.any { it.id == ruteId }) {
+                                        ruteId
+                                    } else {
+                                        todayRute?.id ?: rutes.firstOrNull()?.id ?: "RUTE-01"
+                                    }
+                                    val initPcs = if (isPernahDititip) (stokTitipanAwalInput.toIntOrNull() ?: warung?.stokTitipanPcs ?: 0) else (warung?.stokTitipanPcs ?: 0)
+                                    val entityToSave = warung?.copy(
                                         namaWarung = namaWarung,
                                         namaPemilik = namaPemilik,
                                         noHp = noHp,
@@ -4960,7 +5247,8 @@ val context = LocalContext.current
                                         akurasiGpsMeter = akurasiGps,
                                         limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
                                         ruteId = resolvedRuteId,
-                                        fotoOutlet = fotoOutlet
+                                        fotoOutlet = fotoOutlet,
+                                        stokTitipanPcs = initPcs
                                     ) ?: WarungEntity(
                                         namaWarung = namaWarung,
                                         namaPemilik = namaPemilik,
@@ -4973,18 +5261,89 @@ val context = LocalContext.current
                                         akurasiGpsMeter = akurasiGps,
                                         limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
                                         ruteId = resolvedRuteId,
-                                        fotoOutlet = fotoOutlet
+                                        fotoOutlet = fotoOutlet,
+                                        stokTitipanPcs = initPcs
                                     )
-                                )
-                            }
-                        },
-                        modifier = Modifier.weight(1.5f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Slate900),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(tr("Simpan Outlet", "Save Outlet", lang), fontWeight = FontWeight.Bold)
+                                    onSaveAndOpenTarikSisa(entityToSave)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = tr("Simpan & Langsung Ganti / Tarik Sisa ➜", "Save & Open Replace / Settle ➜", lang),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(tr("Batal", "Cancel", lang), fontWeight = FontWeight.SemiBold)
+                        }
+                        Button(
+                            onClick = {
+                                if (namaWarung.isNotBlank()) {
+                                    val resolvedRuteId = if (ruteId.isNotBlank() && rutes.any { it.id == ruteId }) {
+                                        ruteId
+                                    } else {
+                                        todayRute?.id ?: rutes.firstOrNull()?.id ?: "RUTE-01"
+                                    }
+                                    val initPcs = if (isPernahDititip) (stokTitipanAwalInput.toIntOrNull() ?: warung?.stokTitipanPcs ?: 0) else (warung?.stokTitipanPcs ?: 0)
+                                    val entityToSave = warung?.copy(
+                                        namaWarung = namaWarung,
+                                        namaPemilik = namaPemilik,
+                                        noHp = noHp,
+                                        kategoriWarung = kategoriWarung,
+                                        alamatLengkap = alamat,
+                                        notes = notes,
+                                        latitude = latitude,
+                                        longitude = longitude,
+                                        akurasiGpsMeter = akurasiGps,
+                                        limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
+                                        ruteId = resolvedRuteId,
+                                        fotoOutlet = fotoOutlet,
+                                        stokTitipanPcs = initPcs
+                                    ) ?: WarungEntity(
+                                        namaWarung = namaWarung,
+                                        namaPemilik = namaPemilik,
+                                        noHp = noHp,
+                                        kategoriWarung = kategoriWarung,
+                                        alamatLengkap = alamat,
+                                        notes = notes,
+                                        latitude = latitude,
+                                        longitude = longitude,
+                                        akurasiGpsMeter = akurasiGps,
+                                        limitHutangMaksimal = limitHutang.toDoubleOrNull() ?: 500000.0,
+                                        ruteId = resolvedRuteId,
+                                        fotoOutlet = fotoOutlet,
+                                        stokTitipanPcs = initPcs
+                                    )
+                                    if (isPernahDititip && onSaveAndOpenTarikSisa != null) {
+                                        onSaveAndOpenTarikSisa(entityToSave)
+                                    } else {
+                                        onSave(entityToSave)
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1.5f).height(46.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(tr("Simpan Outlet", "Save Outlet", lang), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

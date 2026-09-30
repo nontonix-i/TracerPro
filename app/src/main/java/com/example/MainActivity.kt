@@ -43,11 +43,45 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        enableHighRefreshRate()
         setContent {
             MyApplicationTheme {
                 SfaMainApp(viewModel = viewModel)
             }
         }
+    }
+
+    /**
+     * Request display mode with up to 120Hz refresh rate for buttery smooth UI rendering.
+     */
+    private fun enableHighRefreshRate() {
+        try {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    display
+                } else {
+                    @Suppress("DEPRECATION")
+                    windowManager.defaultDisplay
+                }
+                val modes = display?.supportedModes
+                // Prioritize 120Hz display modes or highest refresh rate mode available
+                val targetMode = modes?.filter { it.refreshRate in 115f..144f }?.maxByOrNull { it.refreshRate }
+                    ?: modes?.maxByOrNull { it.refreshRate }
+
+                if (targetMode != null && targetMode.refreshRate >= 90f) {
+                    val params = window.attributes
+                    params.preferredDisplayModeId = targetMode.modeId
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        params.preferredRefreshRate = targetMode.refreshRate
+                    }
+                    window.attributes = params
+                }
+            }
+        } catch (_: Exception) {}
     }
 }
 
@@ -128,6 +162,8 @@ fun SfaMainApp(
             viewModel.setScreen(AppNavScreen.DASHBOARD)
         }
     }
+
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     CompositionLocalProvider(com.example.util.LocalAppLanguage provides lang) {
         ModalNavigationDrawer(
@@ -440,7 +476,12 @@ fun SfaMainApp(
                             val isSelected = currentScreen == screen
                             NavigationBarItem(
                                 selected = isSelected,
-                                onClick = { viewModel.setScreen(screen) },
+                                onClick = {
+                                    if (!isSelected) {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        viewModel.setScreen(screen)
+                                    }
+                                },
                                 icon = {
                                     Icon(
                                         imageVector = if (isSelected) icons.first else icons.second,
@@ -478,7 +519,20 @@ fun SfaMainApp(
 
                 AnimatedContent(
                     targetState = currentScreen,
-                    label = "ScreenTransition"
+                    label = "ScreenTransition",
+                    transitionSpec = {
+                        fadeIn(
+                            animationSpec = androidx.compose.animation.core.tween(
+                                durationMillis = 120,
+                                easing = androidx.compose.animation.core.LinearOutSlowInEasing
+                            )
+                        ) togetherWith fadeOut(
+                            animationSpec = androidx.compose.animation.core.tween(
+                                durationMillis = 80,
+                                easing = androidx.compose.animation.core.FastOutLinearInEasing
+                            )
+                        )
+                    }
                 ) { screen ->
                     when (screen) {
                         AppNavScreen.TRANSAKSI -> TransaksiScreen(viewModel = viewModel, onOpenDrawer = { openDrawerAction() })

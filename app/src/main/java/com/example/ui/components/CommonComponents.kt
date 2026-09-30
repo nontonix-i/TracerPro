@@ -43,9 +43,7 @@ fun MinimalStatCard(
             contentColor = Slate900
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = CardDefaults.outlinedCardBorder().copy(
-            brush = SolidColor(Slate200)
-        )
+        border = SlateBorderStroke
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -129,9 +127,7 @@ fun DrawerInventorySummary(
             contentColor = Slate900
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = CardDefaults.outlinedCardBorder().copy(
-            brush = SolidColor(Slate200)
-        )
+        border = SlateBorderStroke
     ) {
         Column(
             modifier = Modifier.padding(14.dp),

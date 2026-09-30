@@ -2607,7 +2607,7 @@ fun MapsScreen(
                             .heightIn(max = 380.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        itemsIndexed(waypoints) { idx, item ->
+                        itemsIndexed(waypoints, key = { _, item -> item.warung.id }, contentType = { _, _ -> "waypoint_item" }) { idx, item ->
                             val isTarget = idx == activeTargetIndex
 
                             Surface(

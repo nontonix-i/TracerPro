@@ -500,6 +500,38 @@ class SfaRepository(private val dao: SfaDao) {
 
         // Update Warung state across all products
         val warungTxList = dao.getTransactionsByWarungSync(warung.id)
+        val hasPriorTx = warungTxList.any { it.productId == productId }
+        if (!hasPriorTx && sisaTitipanLalu > 0) {
+            // Bypass mode: Auto-create initial TITIP_BARU record so consignment history is cleanly established
+            val initialTitipTx = TransactionEntity(
+                warungId = warung.id,
+                ruteId = warung.ruteId,
+                productId = productId,
+                tanggal = today,
+                jenis = "TITIP_BARU",
+                sumberStok = sumberRestock,
+                sisaTitipanLaluPcs = 0,
+                sisaFisikPcs = 0,
+                pcsLaku = 0,
+                hargaSatuan = hargaSatuan,
+                subtotalLaku = 0.0,
+                saldoPiutangLama = warung.saldoPiutang,
+                grandTotalTagihan = 0.0,
+                uangDiterima = 0.0,
+                saldoPiutangBaru = warung.saldoPiutang,
+                statusBayar = "TITIP_BARU",
+                bsDitarikPcs = 0,
+                restockBaruPcs = sisaTitipanLalu,
+                totalTitipanAktifPcs = sisaTitipanLalu,
+                gpsLat = gpsLat,
+                gpsLng = gpsLng,
+                gpsAddress = gpsAddress,
+                catatan = "[Bypass Titip Awal] Stok titipan awal di outlet baru",
+                timestamp = System.currentTimeMillis() - 1000
+            )
+            dao.insertTransaction(initialTitipTx)
+        }
+
         val otherProductsActiveTitipan = warungTxList
             .filter { it.productId != productId }
             .groupBy { it.productId }
@@ -577,6 +609,43 @@ class SfaRepository(private val dao: SfaDao) {
             .toMutableMap()
 
         val createdTxList = mutableListOf<TransactionEntity>()
+
+        // Bypass check: Jika outlet ini belum pernah memiliki transaksi untuk produk yang sisaTitipanLalu > 0,
+        // otomatis terbitkan pencatatan TITIP_BARU awal terlebih dahulu agar saldo & riwayat audit lengkap!
+        for (item in processedItems) {
+            val hasPriorTx = warungTxList.any { it.productId == item.productId }
+            if (!hasPriorTx && item.sisaTitipanLalu > 0) {
+                val initialTitipTx = TransactionEntity(
+                    warungId = warung.id,
+                    ruteId = warung.ruteId,
+                    productId = item.productId,
+                    tanggal = today,
+                    jenis = "TITIP_BARU",
+                    sumberStok = item.sumberRestock,
+                    sisaTitipanLaluPcs = 0,
+                    sisaFisikPcs = 0,
+                    pcsLaku = 0,
+                    hargaSatuan = item.hargaSatuan,
+                    subtotalLaku = 0.0,
+                    saldoPiutangLama = warung.saldoPiutang,
+                    grandTotalTagihan = 0.0,
+                    uangDiterima = 0.0,
+                    saldoPiutangBaru = warung.saldoPiutang,
+                    statusBayar = "TITIP_BARU",
+                    bsDitarikPcs = 0,
+                    restockBaruPcs = item.sisaTitipanLalu,
+                    totalTitipanAktifPcs = item.sisaTitipanLalu,
+                    gpsLat = gpsLat,
+                    gpsLng = gpsLng,
+                    gpsAddress = gpsAddress,
+                    catatan = "[Bypass Titip Awal] Stok titipan awal di outlet baru",
+                    timestamp = System.currentTimeMillis() - 1000
+                )
+                dao.insertTransaction(initialTitipTx)
+                createdTxList.add(initialTitipTx)
+            }
+        }
+
         var sisaUangAlokasi = uangDiterima
 
         for ((index, item) in processedItems.withIndex()) {

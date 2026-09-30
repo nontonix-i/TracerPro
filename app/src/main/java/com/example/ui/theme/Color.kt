@@ -1,6 +1,7 @@
 package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 // =============================================================================
 // UNIFIED ENTERPRISE NEUTRAL COLOR SYSTEM
@@ -70,4 +71,13 @@ val SkyInfo = Color(0xFF0284C7)
 val SkySurface = Color(0xFFF0F9FF)
 val SkyBorder = Color(0xFFBAE6FD)
 val SkyText = Color(0xFF075985)
+
+// =============================================================================
+// REUSABLE STATIC BORDERSTROKES (Pre-allocated for zero-allocation 120Hz scrolling)
+// =============================================================================
+val SlateBorderStroke = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+val Slate300BorderStroke = androidx.compose.foundation.BorderStroke(1.dp, Slate300)
+val EmeraldBorderStroke = androidx.compose.foundation.BorderStroke(1.dp, EmeraldBorder)
+val RoseBorderStroke = androidx.compose.foundation.BorderStroke(1.dp, RoseBorder)
+val BlueBorderStroke = androidx.compose.foundation.BorderStroke(1.dp, BlueBorder)
 

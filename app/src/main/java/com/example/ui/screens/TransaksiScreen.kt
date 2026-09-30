@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.example.data.local.entity.WarungEntity
 import com.example.ui.components.RiskAgingBadge
 import com.example.ui.theme.*
@@ -52,6 +54,8 @@ fun TransaksiScreen(
     onOpenDrawer: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val lang by viewModel.appLanguage.collectAsStateWithLifecycle()
     val warungs by viewModel.warungs.collectAsState()
     val rutes by viewModel.rutes.collectAsState()
@@ -76,12 +80,23 @@ fun TransaksiScreen(
         transactions.groupBy { it.warungId }.mapValues { entry -> entry.value.sumOf { tx -> tx.subtotalLaku } }
     }
 
+    // 120Hz Smooth Scroll Optimization: Only re-sort on GPS proximity when location changes significantly (>15m)
+    val gpsSortKey = remember(currentGps.isAvailable, currentGps.latitude, currentGps.longitude, outletSortBy) {
+        if (outletSortBy == OutletSortBy.TERDEKAT_GPS && currentGps.isAvailable && currentGps.latitude != 0.0) {
+            val qLat = (currentGps.latitude * 5000).toInt()
+            val qLng = (currentGps.longitude * 5000).toInt()
+            "$qLat,$qLng"
+        } else {
+            "static"
+        }
+    }
+
     // Process warungs: calculate distance, days since last visit, filter and sort
     val processedWarungs = remember(
         warungs,
         selectedRuteId,
         searchQuery,
-        currentGps,
+        gpsSortKey,
         outletSortBy,
         outletFilterAging,
         customMinDaysFilter,
@@ -295,23 +310,26 @@ fun TransaksiScreen(
                         ) {
                             // GPS Sync Pill
                             Surface(
-                                onClick = { viewModel.refreshGpsLocation() },
+                                onClick = {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    viewModel.refreshGpsLocation()
+                                },
                                 shape = RoundedCornerShape(8.dp),
                                 color = if (currentGps.isAvailable) EmeraldSuccess.copy(alpha = 0.12f) else AmberWarning.copy(alpha = 0.15f),
                                 border = BorderStroke(
                                     1.dp,
                                     if (currentGps.isAvailable) EmeraldSuccess.copy(alpha = 0.35f) else AmberWarning
                                 ),
-                                modifier = Modifier.height(32.dp)
+                                modifier = Modifier.height(36.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(6.dp)
+                                            .size(7.dp)
                                             .clip(CircleShape)
                                             .background(if (currentGps.isAvailable) EmeraldSuccess else AmberWarning)
                                     )
@@ -398,7 +416,7 @@ fun TransaksiScreen(
                         placeholder = {
                             Text(
                                 AppStrings.tr("Cari nama outlet, pemilik, atau alamat...", "Search outlet name, owner, or address...", lang),
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 color = Slate400
                             )
                         },
@@ -412,7 +430,13 @@ fun TransaksiScreen(
                         },
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                IconButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        viewModel.setSearchQuery("")
+                                        focusManager.clearFocus()
+                                    }
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "Clear",
@@ -422,6 +446,12 @@ fun TransaksiScreen(
                                 }
                             }
                         },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onSearch = { focusManager.clearFocus() }
+                        ),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
                         colors = appTextFieldColors(
@@ -805,15 +835,28 @@ fun WarungOperationalCard(
     lang: String = "ID"
 ) {
     val debtRatio = (warung.saldoPiutang / warung.limitHutangMaksimal.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
+    val context = LocalContext.current
+    val cardHaptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val isBlacklist = warung.status == "Blacklist"
     val daysSinceDebt = if (warung.saldoPiutang > 0) {
         ((System.currentTimeMillis() - warung.tglMulaiHutang) / (1000 * 60 * 60 * 24)).toInt().coerceAtLeast(1)
     } else 0
 
+    val cardBorder = when {
+        isBlacklist -> RoseBorderStroke
+        isVisitedToday -> Slate300BorderStroke
+        else -> SlateBorderStroke
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("warung_card_${warung.id}"),
+            .testTag("warung_card_${warung.id}")
+            .clip(RoundedCornerShape(14.dp))
+            .clickable {
+                cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                if (isBlacklist) onDetail() else onTarikSisa()
+            },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = when {
@@ -824,14 +867,7 @@ fun WarungOperationalCard(
             contentColor = Slate900
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(
-            1.dp,
-            when {
-                isBlacklist -> RoseBorder
-                isVisitedToday -> Slate300
-                else -> Slate200
-            }
-        )
+        border = cardBorder
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -852,8 +888,16 @@ fun WarungOperationalCard(
                     contentAlignment = Alignment.Center
                 ) {
                     if (warung.fotoOutlet != null && warung.fotoOutlet.isNotBlank()) {
+                        val imageRequest = remember(warung.fotoOutlet) {
+                            ImageRequest.Builder(context)
+                                .data(warung.fotoOutlet)
+                                .crossfade(false)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .build()
+                        }
                         AsyncImage(
-                            model = warung.fotoOutlet,
+                            model = imageRequest,
                             contentDescription = "Foto Outlet",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
@@ -1030,16 +1074,19 @@ fun WarungOperationalCard(
                 }
 
                 Button(
-                    onClick = onNavigateGmaps,
-                    shape = RoundedCornerShape(6.dp),
+                    onClick = {
+                        cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        onNavigateGmaps()
+                    },
+                    shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Slate900,
                         contentColor = Color.White
                     ),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(34.dp)
                 ) {
-                    Icon(Icons.Default.Directions, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Icon(Icons.Default.Directions, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Maps", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
@@ -1131,10 +1178,13 @@ fun WarungOperationalCard(
                 ) {
                     // Skenario A: Titip Baru
                     OutlinedButton(
-                        onClick = onTitipBaru,
+                        onClick = {
+                            cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onTitipBaru()
+                        },
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp)
+                            .height(46.dp)
                             .testTag("btn_titip_baru_${warung.id}"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -1156,10 +1206,13 @@ fun WarungOperationalCard(
 
                     // Skenario B: Ganti Barang / Tarik Sisa
                     Button(
-                        onClick = onTarikSisa,
+                        onClick = {
+                            cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onTarikSisa()
+                        },
                         modifier = Modifier
                             .weight(1.3f)
-                            .height(42.dp)
+                            .height(46.dp)
                             .testTag("btn_tarik_sisa_${warung.id}"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -1183,9 +1236,12 @@ fun WarungOperationalCard(
 
                     // Statistics Button
                     IconButton(
-                        onClick = onStatistics,
+                        onClick = {
+                            cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onStatistics()
+                        },
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(46.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Slate100)
                             .testTag("btn_stats_${warung.id}")
@@ -1200,9 +1256,12 @@ fun WarungOperationalCard(
 
                     // More Menu Button
                     IconButton(
-                        onClick = onDetail,
+                        onClick = {
+                            cardHaptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onDetail()
+                        },
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(46.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Slate100)
                     ) {

@@ -285,7 +285,7 @@ fun AiCopilotDialog(
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        items(messages) { msg ->
+                        items(messages, key = { it.id }, contentType = { it.role }) { msg ->
                             val isUser = msg.role == "user"
                             val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
 

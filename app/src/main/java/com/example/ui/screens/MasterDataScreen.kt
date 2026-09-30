@@ -168,6 +168,11 @@ fun MasterDataScreen(
                 }
             }
 
+            // Precomputed O(1) lookup maps to eliminate nested linear scans during 120Hz flings
+            val pabriksById = remember(pabriks) { pabriks.associateBy { it.id } }
+            val rutesById = remember(rutes) { rutes.associateBy { it.id } }
+            val warungsByRoute = remember(warungs) { warungs.filter { it.status == "Aktif" }.groupBy { it.ruteId } }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -179,7 +184,7 @@ fun MasterDataScreen(
                     0 -> {
                         // PRODUK TAB
                         itemsIndexed(products, key = { _, item -> item.id }, contentType = { _, _ -> "product_item" }) { index, product ->
-                            val matchedPabrik = pabriks.find { it.id == product.pabrikId }
+                            val matchedPabrik = pabriksById[product.pabrikId]
                             ProductMasterCard(
                                 product = product,
                                 orderNumber = index + 1,
@@ -197,7 +202,7 @@ fun MasterDataScreen(
                     1 -> {
                         // WARUNG TAB
                         itemsIndexed(warungs, key = { _, item -> item.id }, contentType = { _, _ -> "warung_item" }) { index, warung ->
-                            val matchedRute = rutes.find { it.id == warung.ruteId }
+                            val matchedRute = rutesById[warung.ruteId]
                             val ruteLabel = if (matchedRute != null) "${matchedRute.namaRute.split("-").first().trim()} (${matchedRute.hariKunjungan})" else warung.ruteId
                             WarungMasterCard(
                                 warung = warung,
@@ -222,7 +227,7 @@ fun MasterDataScreen(
                     2 -> {
                         // RUTE TAB
                         itemsIndexed(rutes, key = { _, item -> item.id }, contentType = { _, _ -> "rute_item" }) { index, rute ->
-                            val routeWarungs = warungs.filter { it.ruteId == rute.id && it.status == "Aktif" }
+                            val routeWarungs = warungsByRoute[rute.id] ?: emptyList()
                             RuteMasterCard(
                                 rute = rute,
                                 orderNumber = index + 1,
